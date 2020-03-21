@@ -1,2 +1,2 @@
 # pond
-Pond: Minimalistic and high-performance goroutine worker pool writen in Go
+pond: Minimalistic and High-performance goroutine worker pool writen in Go
