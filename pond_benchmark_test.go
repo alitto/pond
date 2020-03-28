@@ -11,14 +11,34 @@ import (
 )
 
 const (
-	taskCount    = 1000000
-	taskDuration = 10 * time.Millisecond
-	workerCount  = 200000
+	taskCount    = 10000
+	taskDuration = 1 * time.Millisecond
+	workerCount  = 100
 )
 
 func BenchmarkPond(b *testing.B) {
 	var wg sync.WaitGroup
 	pool := pond.New(workerCount, taskCount)
+	defer pool.StopAndWait()
+
+	// Submit tasks
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wg.Add(taskCount)
+		for i := 0; i < taskCount; i++ {
+			pool.Submit(func() {
+				time.Sleep(taskDuration)
+				wg.Done()
+			})
+		}
+		wg.Wait()
+	}
+	b.StopTimer()
+}
+
+func BenchmarkPondMinWorkers(b *testing.B) {
+	var wg sync.WaitGroup
+	pool := pond.New(workerCount, taskCount, pond.MinWorkers(workerCount))
 	defer pool.StopAndWait()
 
 	// Submit tasks
@@ -67,6 +87,64 @@ func BenchmarkGoroutines(b *testing.B) {
 				wg.Done()
 			}()
 		}
+		wg.Wait()
+	}
+	b.StopTimer()
+}
+
+func BenchmarkGoroutinePool(b *testing.B) {
+	var wg sync.WaitGroup
+
+	// Submit tasks
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		taskChan := make(chan func())
+		wg.Add(workerCount)
+		// Start worker goroutines
+		for i := 0; i < workerCount; i++ {
+			go func() {
+				for task := range taskChan {
+					task()
+				}
+				wg.Done()
+			}()
+		}
+		// Submit tasks
+		for i := 0; i < taskCount; i++ {
+			taskChan <- func() {
+				time.Sleep(taskDuration)
+			}
+		}
+		close(taskChan)
+		wg.Wait()
+	}
+	b.StopTimer()
+}
+
+func BenchmarkBufferedGoroutinePool(b *testing.B) {
+	var wg sync.WaitGroup
+
+	// Submit tasks
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		taskChan := make(chan func(), taskCount)
+		wg.Add(workerCount)
+		// Start worker goroutines
+		for i := 0; i < workerCount; i++ {
+			go func() {
+				for task := range taskChan {
+					task()
+				}
+				wg.Done()
+			}()
+		}
+		// Submit tasks
+		for i := 0; i < taskCount; i++ {
+			taskChan <- func() {
+				time.Sleep(taskDuration)
+			}
+		}
+		close(taskChan)
 		wg.Wait()
 	}
 	b.StopTimer()

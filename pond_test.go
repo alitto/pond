@@ -209,7 +209,7 @@ func TestSubmitWithPanic(t *testing.T) {
 	assert.Equal(int32(1), atomic.LoadInt32(&doneCount))
 }
 
-func TestSubmitWithIdleTimeout(t *testing.T) {
+func TestPoolWithCustomIdleTimeout(t *testing.T) {
 
 	assert := assert.New(t)
 
@@ -242,7 +242,7 @@ func TestSubmitWithIdleTimeout(t *testing.T) {
 	pool.StopAndWait()
 }
 
-func TestSubmitWithPanicHandler(t *testing.T) {
+func TestPoolWithCustomPanicHandler(t *testing.T) {
 
 	assert := assert.New(t)
 
@@ -262,6 +262,32 @@ func TestSubmitWithPanicHandler(t *testing.T) {
 
 	// Panic should have been captured
 	assert.Equal("panic now!", capturedPanic)
+}
+
+func TestPoolWithCustomMinWorkers(t *testing.T) {
+
+	assert := assert.New(t)
+
+	pool := pond.New(10, 5, pond.MinWorkers(10))
+
+	// Submit a task that panics
+	started := make(chan struct{})
+	completed := make(chan struct{})
+	pool.Submit(func() {
+		<-started
+		completed <- struct{}{}
+	})
+
+	started <- struct{}{}
+
+	// 10 workers should have been started
+	assert.Equal(10, pool.Running())
+
+	<-completed
+
+	pool.StopAndWait()
+
+	assert.Equal(0, pool.Running())
 }
 
 func TestGroupSubmit(t *testing.T) {

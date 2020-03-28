@@ -16,6 +16,16 @@ func defaultPanicHandler(panic interface{}) {
 	fmt.Printf("Worker exits from a panic: %v\nStack trace: %s\n", panic, string(debug.Stack()))
 }
 
+func linearGrowthFn(workerCount, minWorkers, maxWorkers int) int {
+	if workerCount < minWorkers {
+		return minWorkers
+	}
+	if workerCount < maxWorkers {
+		return 1
+	}
+	return 0
+}
+
 // Option represents an option that can be passed when building a worker pool to customize it
 type Option func(*WorkerPool)
 
@@ -33,8 +43,16 @@ func PanicHandler(panicHandler func(interface{})) Option {
 	}
 }
 
+// MinWorkers allows to change the minimum number of workers of a worker pool
+func MinWorkers(minWorkers int) Option {
+	return func(pool *WorkerPool) {
+		pool.minWorkers = minWorkers
+	}
+}
+
 // WorkerPool models a pool of workers
 type WorkerPool struct {
+	minWorkers      int
 	maxWorkers      int
 	maxCapacity     int
 	idleTimeout     time.Duration
@@ -45,6 +63,7 @@ type WorkerPool struct {
 	stopOnce        sync.Once
 	waitGroup       sync.WaitGroup
 	panicHandler    func(interface{})
+	growthFn        func(int, int, int) int
 }
 
 // New creates a worker pool with that can scale up to the given number of workers and capacity
@@ -58,11 +77,20 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 		dispatchedTasks: make(chan func(), maxWorkers),
 		purgerQuit:      make(chan struct{}),
 		panicHandler:    defaultPanicHandler,
+		growthFn:        linearGrowthFn,
 	}
 
 	// Apply all options
 	for _, opt := range options {
 		opt(pool)
+	}
+
+	// Make sure options are consistent
+	if pool.maxWorkers <= 0 {
+		pool.maxWorkers = 1
+	}
+	if pool.minWorkers > pool.maxWorkers {
+		pool.minWorkers = pool.maxWorkers
 	}
 
 	// Start dispatcher goroutine
@@ -80,6 +108,11 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 
 		pool.purge()
 	}()
+
+	// Start minWorkers workers
+	if pool.minWorkers > 0 {
+		pool.startWorkers()
+	}
 
 	return pool
 }
@@ -138,12 +171,12 @@ func (p *WorkerPool) dispatch() {
 		// Attempt to submit the task to a worker without blocking
 		case p.dispatchedTasks <- task:
 			if p.Running() == 0 {
-				p.startWorker()
+				p.startWorkers()
 			}
 		default:
 			// Create a new worker if we haven't reached the limit yet
 			if p.Running() < p.maxWorkers {
-				p.startWorker()
+				p.startWorkers()
 			}
 
 			// Block until a worker accepts this task
@@ -167,7 +200,7 @@ func (p *WorkerPool) purge() {
 		select {
 		// Timed out waiting for any activity to happen, attempt to stop an idle worker
 		case <-ticker.C:
-			if p.Running() > 0 {
+			if p.Running() > p.minWorkers {
 				select {
 				case p.dispatchedTasks <- nil:
 				default:
@@ -182,22 +215,34 @@ func (p *WorkerPool) purge() {
 	}
 }
 
-func (p *WorkerPool) startWorker() {
+func (p *WorkerPool) startWorkers() {
+
+	count := p.growthFn(p.Running(), p.minWorkers, p.maxWorkers)
+
+	if count == 0 {
+		return
+	}
+
 	// Increment worker count
-	atomic.AddInt32(&p.workerCount, 1)
+	atomic.AddInt32(&p.workerCount, int32(count))
 
 	// Increment waiting group semaphore
-	p.waitGroup.Add(1)
+	p.waitGroup.Add(count)
 
-	worker(p.dispatchedTasks, func() {
+	//go func() {
+	for i := 0; i < count; i++ {
+		worker(p.dispatchedTasks, func() {
 
-		// Decrement worker count
-		atomic.AddInt32(&p.workerCount, -1)
+			// Decrement worker count
+			atomic.AddInt32(&p.workerCount, -1)
 
-		// Decrement waiting group semaphore
-		p.waitGroup.Done()
+			// Decrement waiting group semaphore
+			p.waitGroup.Done()
 
-	}, p.panicHandler)
+		}, p.panicHandler)
+	}
+	//}()
+
 }
 
 // Stop causes this pool to stop accepting tasks, without waiting for goroutines to exit
