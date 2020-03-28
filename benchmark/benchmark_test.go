@@ -1,4 +1,4 @@
-package pond_test
+package benchmark
 
 import (
 	"sync"
@@ -11,10 +11,14 @@ import (
 )
 
 const (
-	taskCount    = 10000
+	taskCount    = 1000000
 	taskDuration = 1 * time.Millisecond
-	workerCount  = 100
+	workerCount  = 20000
 )
+
+func testFunc() {
+	time.Sleep(taskDuration)
+}
 
 func BenchmarkPond(b *testing.B) {
 	var wg sync.WaitGroup
@@ -27,7 +31,7 @@ func BenchmarkPond(b *testing.B) {
 		wg.Add(taskCount)
 		for i := 0; i < taskCount; i++ {
 			pool.Submit(func() {
-				time.Sleep(taskDuration)
+				testFunc()
 				wg.Done()
 			})
 		}
@@ -47,7 +51,7 @@ func BenchmarkPondMinWorkers(b *testing.B) {
 		wg.Add(taskCount)
 		for i := 0; i < taskCount; i++ {
 			pool.Submit(func() {
-				time.Sleep(taskDuration)
+				testFunc()
 				wg.Done()
 			})
 		}
@@ -65,9 +69,7 @@ func BenchmarkPondGroup(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		group := pool.Group()
 		for i := 0; i < taskCount; i++ {
-			group.Submit(func() {
-				time.Sleep(taskDuration)
-			})
+			group.Submit(testFunc)
 		}
 		group.Wait()
 	}
@@ -83,7 +85,7 @@ func BenchmarkGoroutines(b *testing.B) {
 		wg.Add(taskCount)
 		for i := 0; i < taskCount; i++ {
 			go func() {
-				time.Sleep(taskDuration)
+				testFunc()
 				wg.Done()
 			}()
 		}
@@ -111,9 +113,7 @@ func BenchmarkGoroutinePool(b *testing.B) {
 		}
 		// Submit tasks
 		for i := 0; i < taskCount; i++ {
-			taskChan <- func() {
-				time.Sleep(taskDuration)
-			}
+			taskChan <- testFunc
 		}
 		close(taskChan)
 		wg.Wait()
@@ -140,9 +140,7 @@ func BenchmarkBufferedGoroutinePool(b *testing.B) {
 		}
 		// Submit tasks
 		for i := 0; i < taskCount; i++ {
-			taskChan <- func() {
-				time.Sleep(taskDuration)
-			}
+			taskChan <- testFunc
 		}
 		close(taskChan)
 		wg.Wait()
@@ -161,7 +159,7 @@ func BenchmarkGammazeroWorkerpool(b *testing.B) {
 		wg.Add(taskCount)
 		for i := 0; i < taskCount; i++ {
 			wp.Submit(func() {
-				time.Sleep(taskDuration)
+				testFunc()
 				wg.Done()
 			})
 		}
@@ -181,7 +179,7 @@ func BenchmarkAnts(b *testing.B) {
 		wg.Add(taskCount)
 		for i := 0; i < taskCount; i++ {
 			_ = p.Submit(func() {
-				time.Sleep(taskDuration)
+				testFunc()
 				wg.Done()
 			})
 		}
