@@ -12,8 +12,8 @@ import (
 
 const (
 	taskCount    = 1000000
-	taskDuration = 1 * time.Millisecond
-	workerCount  = 20000
+	taskDuration = 10 * time.Millisecond
+	workerCount  = 200000
 )
 
 func testFunc() {
@@ -36,42 +36,6 @@ func BenchmarkPond(b *testing.B) {
 			})
 		}
 		wg.Wait()
-	}
-	b.StopTimer()
-}
-
-func BenchmarkPondMinWorkers(b *testing.B) {
-	var wg sync.WaitGroup
-	pool := pond.New(workerCount, taskCount, pond.MinWorkers(workerCount))
-	defer pool.StopAndWait()
-
-	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(taskCount)
-		for i := 0; i < taskCount; i++ {
-			pool.Submit(func() {
-				testFunc()
-				wg.Done()
-			})
-		}
-		wg.Wait()
-	}
-	b.StopTimer()
-}
-
-func BenchmarkPondGroup(b *testing.B) {
-	pool := pond.New(workerCount, taskCount)
-	defer pool.StopAndWait()
-
-	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		group := pool.Group()
-		for i := 0; i < taskCount; i++ {
-			group.Submit(testFunc)
-		}
-		group.Wait()
 	}
 	b.StopTimer()
 }

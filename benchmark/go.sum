@@ -1,5 +1,7 @@
 github.com/alitto/pond v0.0.0-20200328140845-2664f1bbde39 h1:SIo+wt6R2/Kr95aTdvNuu4ByPknfHbJPfGbJMoi85q4=
 github.com/alitto/pond v0.0.0-20200328140845-2664f1bbde39/go.mod h1:EDWzkjFhFR5/owRwSl7DXKa2yuSQmPB0g6C/YZSAxCo=
+github.com/alitto/pond v1.0.0 h1:S6ooziYolk+z5dxct9BMpEEHkJEL3OUeNplu/NK8Si4=
+github.com/alitto/pond v1.0.0/go.mod h1:VkhnWZhFBtkzZgpjXEyQ4Skyf8nfcGXsZ7PTklN29a4=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
