@@ -4,15 +4,15 @@
 <a title="Go Report Card" target="_blank" href="https://goreportcard.com/report/github.com/alitto/pond"><img src="https://goreportcard.com/badge/github.com/alitto/pond"></a>
 
 # pond
-pond: Minimalistic and High-performance goroutine worker pool written in Go
+Minimalistic and High-performance goroutine worker pool written in Go
 
 ## Features:
 
 - Zero dependencies
-- Creating goroutine pools with fixed or dynamic size
+- Create pools with fixed or dynamic size
 - Worker goroutines are only created when needed (backpressure detection) and automatically purged after being idle for some time (configurable)
 - Minimalistic APIs for:
-  - Creating a worker pool
+  - Creating worker pools with fixed or dynamic size
   - Submitting tasks to a pool in a fire-and-forget fashion
   - Submitting tasks to a pool and waiting for them to complete
   - Submitting tasks to a pool with a deadline
@@ -20,7 +20,7 @@ pond: Minimalistic and High-performance goroutine worker pool written in Go
   - Getting the number of running workers (goroutines)
   - Stopping a worker pool
 - Task panics are handled gracefully (configurable panic handler)
-- Supports Blocking and Non-blocking task submission modes
+- Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
 - Efficient memory usage
 
 ## How to install
