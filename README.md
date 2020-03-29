@@ -8,13 +8,20 @@ pond: Minimalistic and High-performance goroutine worker pool written in Go
 
 ## Features:
 
-- Managing and recycling a massive number of goroutines automatically
-- Purging overdue goroutines periodically
-- Minimalistic API for submitting tasks, getting the number of running goroutines, stopping the pool and more.
 - Zero dependencies
-- Handle task panics gracefully
+- Creating goroutine pools with fixed or dynamic size
+- Worker goroutines are only created when needed (backpressure detection) and automatically purged after being idle for some time (configurable)
+- Minimalistic APIs for:
+  - Creating a worker pool
+  - Submitting tasks to a pool in a fire-and-forget fashion
+  - Submitting tasks to a pool and waiting for them to complete
+  - Submitting tasks to a pool with a deadline
+  - Submitting a group of related tasks and waiting for them to complete
+  - Getting the number of running workers (goroutines)
+  - Stopping a worker pool
+- Task panics are handled gracefully (configurable panic handler)
+- Supports Blocking and Non-blocking task submission modes
 - Efficient memory usage
-- Blocking and Nonblocking modes supported
 
 ## How to install
 
@@ -23,6 +30,8 @@ go get -u github.com/alitto/pond
 ```
 
 ## How to use
+
+### Worker pool with dynamic size
 
 ``` go
 package main
@@ -35,7 +44,8 @@ import (
 
 func main() {
 
-	// Create a pool with 100 workers
+	// Create a buffered (non-blocking) pool that can scale up to 100 workers
+	// and has a buffer capacity of 1000 tasks
 	pool := pond.New(100, 1000)
 
 	// Submit 1000 tasks
@@ -48,5 +58,68 @@ func main() {
 
 	// Stop the pool and wait for all submitted tasks to complete
 	pool.StopAndWait()
+}
+```
+
+### Worker pool with fixed size
+
+``` go
+package main
+
+import (
+	"fmt"
+
+	"github.com/alitto/pond"
+)
+
+func main() {
+
+	// Create an unbuffered (blocking) pool with a fixed 
+	// number of workers
+	pool := pond.New(10, 0, pond.MinWorkers(10))
+
+	// Submit 1000 tasks
+	for i := 0; i < 1000; i++ {
+		n := i
+		pool.Submit(func() {
+			fmt.Printf("Running task #%d\n", n)
+		})
+	}
+
+	// Stop the pool and wait for all submitted tasks to complete
+	pool.StopAndWait()
+}
+```
+
+### Submitting groups of related tasks
+
+``` go
+package main
+
+import (
+	"fmt"
+
+	"github.com/alitto/pond"
+)
+
+func main() {
+
+	// Create a pool
+	pool := pond.New(10, 1000)
+	defer pool.StopAndWait()
+
+	// Create a task group
+	group := pool.Group()
+
+	// Submit a group of related tasks
+	for i := 0; i < 20; i++ {
+		n := i
+		group.Submit(func() {
+			fmt.Printf("Running group task #%d\n", n)
+		})
+	}
+
+	// Wait for all tasks in the group to complete
+	group.Wait()
 }
 ```

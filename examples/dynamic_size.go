@@ -8,7 +8,8 @@ import (
 
 func main() {
 
-	// Create a pool with 100 workers
+	// Create a buffered (non-blocking) pool that can scale up to 100 workers
+	// and has a buffer capacity of 1000 tasks
 	pool := pond.New(100, 1000)
 
 	// Submit 1000 tasks
