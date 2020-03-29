@@ -22,6 +22,7 @@ Minimalistic and High-performance goroutine worker pool written in Go
 - Task panics are handled gracefully (configurable panic handler)
 - Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
 - Efficient memory usage
+- [API reference](https://pkg.go.dev/github.com/alitto/pond)
 
 ## How to install
 
@@ -123,3 +124,7 @@ func main() {
 	group.Wait()
 }
 ```
+
+## API Reference
+
+Full API reference is available at https://pkg.go.dev/github.com/alitto/pond
