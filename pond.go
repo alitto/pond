@@ -243,9 +243,6 @@ func (p *WorkerPool) dispatch() {
 		batch = nil
 	}
 
-	// Send signal to stop all workers
-	close(p.dispatchedTasks)
-
 	// Send signal to stop the purger
 	close(p.purgerQuit)
 }
@@ -269,6 +266,10 @@ func (p *WorkerPool) purge() {
 
 		// Received the signal to exit
 		case <-p.purgerQuit:
+
+			// Send signal to stop all workers
+			close(p.dispatchedTasks)
+
 			return
 		}
 	}
