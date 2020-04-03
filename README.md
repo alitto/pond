@@ -136,17 +136,17 @@ func main() {
 
 ### Pool Configuration Options
 
-- **MinWorkers**: Specifies the minimum number of worker goroutines that must be running at any given time. These goroutines are started when the pool is created. Example:
+- **MinWorkers**: Specifies the minimum number of worker goroutines that must be running at any given time. These goroutines are started when the pool is created. The default value is 0. Example:
 ``` go
 // This will create a pool with 5 running worker goroutines 
 pool := pond.New(10, 1000, pond.MinWorkers(5))
 ```
-- **IdleTimeout**: Defines how long to wait before removing idle worker goroutines from the pool. Example:
+- **IdleTimeout**: Defines how long to wait before removing idle worker goroutines from the pool. The default value is 5 seconds. Example:
 ``` go
 // This will create a pool that will remove workers 100ms after they become idle 
 pool := pond.New(10, 1000, pond.IdleTimeout(100 * time.Millisecond))
 ``` 
-- **PanicHandler**: Allows to configure a custom function to handle panics thrown by tasks submitted to the pool. Example:
+- **PanicHandler**: Allows to configure a custom function to handle panics thrown by tasks submitted to the pool. The default handler just writes a message to standard output using `fmt.Printf` with the following contents: `Worker exits from a panic: [panic] \n Stack trace: [stack trace]`).  Example:
 ```go
 // Custom panic handler function
 panicHandler := func(p interface{}) {
@@ -187,6 +187,8 @@ Success: Benchmarks passed.
 ```
 
 As you can see, _pond_ (503.5ms) outperforms _ants_ (665.9ms), _Gammazero's workerpool_ (1413.7ms), unbuffered goruotine pool (1035.8ms) and buffered goroutine pool (968.5ms) but it falls behind unlimited goroutines (444.3ms).
+
+Leaving aside the fact that launching unlimited goroutines defeats the goal of limiting concurrency over a resource, its performance is highly dependant on how much resources (CPU and memory) are available at a given time, which make it unpredictable and likely to cause starvation. In other words, it's generally not a good idea for production applications.
 
 These tests were executed on a laptop with an 8-core CPU (Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz) and 16GB of RAM.
 
