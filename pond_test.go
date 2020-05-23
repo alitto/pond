@@ -29,10 +29,3 @@ func TestNewWithInconsistentOptions(t *testing.T) {
 	assertEqual(t, 1, pool.minWorkers)
 	assertEqual(t, defaultIdleTimeout, pool.idleTimeout)
 }
-
-func TestLinearGrowthFn(t *testing.T) {
-
-	assertEqual(t, 1, linearGrowthFn(0, 1, 1))
-	assertEqual(t, 1, linearGrowthFn(0, 1, 2))
-	assertEqual(t, 0, linearGrowthFn(3, 1, 3))
-}

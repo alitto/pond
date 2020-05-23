@@ -31,11 +31,12 @@ Some common scenarios include:
 - Task panics are handled gracefully (configurable panic handler)
 - Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
 - Very high performance under heavy workloads (See [benchmarks](#benchmarks))
+- **New (since v1.3.0)**: configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
 - [API reference](https://pkg.go.dev/github.com/alitto/pond)
 
 ## How to install
 
-```powershell
+```bash
 go get -u github.com/alitto/pond
 ```
 
@@ -155,6 +156,16 @@ panicHandler := func(p interface{}) {
 
 // This will create a pool that will handle panics using a custom panic handler
 pool := pond.New(10, 1000, pond.PanicHandler(panicHandler)))
+```
+- **Strategy**: Configures the strategy used to resize the pool when backpressure is detected. You can create a custom strategy by implementing the `pond.ResizingStrategy` interface or choose one of the 3 presets:
+    - **Eager**: maximizes responsiveness at the expense of higher resource usage, which can reduce throughput under certain conditions. This strategy is meant for worker pools that will operate at a small percentage of their capacity most of the time and may occasionally receive bursts of tasks.
+	- **Balanced**: tries to find a balance between responsiveness and throughput. It's suitable for general purpose worker pools or those that will operate close to 50% of their capacity most of the time. This is the default strategy.
+	- **Lazy**: maximizes throughput at the expense of responsiveness. This strategy is meant for worker pools that will operate close to their max. capacity most of the time.
+``` go
+// Example: create pools with different resizing strategies
+eagerPool := pond.New(10, 1000, pond.Strategy(pond.Eager))
+balancedPool := pond.New(10, 1000, pond.Strategy(pond.Balanced))
+lazyPool := pond.New(10, 1000, pond.Strategy(pond.Lazy))
 ``` 
 
 ## API Reference
@@ -163,30 +174,50 @@ Full API reference is available at https://pkg.go.dev/github.com/alitto/pond
 
 ## Benchmarks
 
-We ran a few [benchmarks](benchmark/benchmark_test.go) to show how _pond_'s performance compares against some of the most popular worker pool libraries available for Go ([ants](https://github.com/panjf2000/ants/) and [gammazero's workerpool](https://github.com/gammazero/workerpool)).
+We ran a few [benchmarks](benchmark/benchmark_test.go) to see how _pond_'s performance compares against some of the most popular worker pool libraries available for Go ([ants](https://github.com/panjf2000/ants/) and [gammazero's workerpool](https://github.com/gammazero/workerpool)), as well as just launching unbounded goroutines and manually creating a goroutine worker pool (inspired by [gobyexample.com](https://gobyexample.com/worker-pools)), using either a buffered or an unbuffered channel to dispatch tasks. 
 
-We also included benchmarks to compare it against just launching 1M goroutines and manually creating a goroutine worker pool (inspired by [gobyexample.com](https://gobyexample.com/worker-pools)), using either a buffered or an unbuffered channel to dispatch tasks. 
+The test consists of submitting 3 different workloads to each worker pool:
+- *1M-10ms*: 1 million tasks that sleep for 10 milliseconds (`time.Sleep(10*time.Millisecond)`)
+- *100k-500ms*: 100 thousand tasks that sleep for 500 milliseconds (`time.Sleep(500*time.Millisecond)`)
+- *10k-1000ms*: 10 thousand tasks that sleep for 1 second (`time.Sleep(1*time.Second)`) 
 
-The test consists of submitting 1 million tasks to the pool, each of them simulating a 10ms operation by executing `time.Sleep(10 * time.Millisecond)`. All pools are configured to use a maximum of 200k workers and initialization times are not taken into account.
+ All pools are configured to use a maximum of 200k workers and initialization times are taken into account.
 
 Here are the results:
 
-```powershell
+```bash
 goos: linux
 goarch: amd64
 pkg: github.com/alitto/pond/benchmark
-BenchmarkPond-8                    	       2	 503513856 ns/op	65578500 B/op	 1057273 allocs/op
-BenchmarkGoroutines-8              	       3	 444264750 ns/op	81560042 B/op	 1003312 allocs/op
-BenchmarkGoroutinePool-8           	       1	1035752534 ns/op	79889952 B/op	  512480 allocs/op
-BenchmarkBufferedGoroutinePool-8   	       2	 968502858 ns/op	51945376 B/op	  419122 allocs/op
-BenchmarkGammazeroWorkerpool-8     	       1	1413724148 ns/op	18018800 B/op	 1023746 allocs/op
-BenchmarkAnts-8                    	       2	 665947820 ns/op	19401172 B/op	 1046906 allocs/op
+BenchmarkAll/1M-10ms/Pond-Eager-8         	       2	 620347142 ns/op	82768720 B/op	 1086686 allocs/op
+BenchmarkAll/1M-10ms/Pond-Balanced-8      	       2	 578973910 ns/op	81339088 B/op	 1083203 allocs/op
+BenchmarkAll/1M-10ms/Pond-Lazy-8          	       2	 613344573 ns/op	84347248 B/op	 1084987 allocs/op
+BenchmarkAll/1M-10ms/Goroutines-8         	       2	 540765682 ns/op	98457168 B/op	 1060433 allocs/op
+BenchmarkAll/1M-10ms/GoroutinePool-8      	       1	1157705614 ns/op	68137088 B/op	 1409763 allocs/op
+BenchmarkAll/1M-10ms/BufferedPool-8       	       1	1158068370 ns/op	76426272 B/op	 1412739 allocs/op
+BenchmarkAll/1M-10ms/Gammazero-8          	       1	1330312458 ns/op	34524328 B/op	 1029692 allocs/op
+BenchmarkAll/1M-10ms/AntsPool-8           	       2	 724231628 ns/op	37870404 B/op	 1077297 allocs/op
+BenchmarkAll/100k-500ms/Pond-Eager-8      	       2	 604180003 ns/op	31523028 B/op	  349877 allocs/op
+BenchmarkAll/100k-500ms/Pond-Balanced-8   	       1	1060079592 ns/op	35520416 B/op	  398779 allocs/op
+BenchmarkAll/100k-500ms/Pond-Lazy-8       	       1	1053705909 ns/op	35040512 B/op	  392696 allocs/op
+BenchmarkAll/100k-500ms/Goroutines-8      	       2	 551869174 ns/op	 8000016 B/op	  100001 allocs/op
+BenchmarkAll/100k-500ms/GoroutinePool-8   	       2	 635442074 ns/op	20764560 B/op	  299632 allocs/op
+BenchmarkAll/100k-500ms/BufferedPool-8    	       2	 641683384 ns/op	21647840 B/op	  299661 allocs/op
+BenchmarkAll/100k-500ms/Gammazero-8       	       2	 667449574 ns/op	16241864 B/op	  249664 allocs/op
+BenchmarkAll/100k-500ms/AntsPool-8        	       2	 659853037 ns/op	37300372 B/op	  549784 allocs/op
+BenchmarkAll/10k-1000ms/Pond-Eager-8      	       1	1014320653 ns/op	12135080 B/op	   39692 allocs/op
+BenchmarkAll/10k-1000ms/Pond-Balanced-8   	       1	1015979207 ns/op	12083704 B/op	   39518 allocs/op
+BenchmarkAll/10k-1000ms/Pond-Lazy-8       	       1	1036374161 ns/op	12046632 B/op	   39366 allocs/op
+BenchmarkAll/10k-1000ms/Goroutines-8      	       1	1007837894 ns/op	  800016 B/op	   10001 allocs/op
+BenchmarkAll/10k-1000ms/GoroutinePool-8   	       1	1149536612 ns/op	21393024 B/op	  222458 allocs/op
+BenchmarkAll/10k-1000ms/BufferedPool-8    	       1	1127286218 ns/op	20343584 B/op	  219359 allocs/op
+BenchmarkAll/10k-1000ms/Gammazero-8       	       1	1023249222 ns/op	 2019688 B/op	   29374 allocs/op
+BenchmarkAll/10k-1000ms/AntsPool-8        	       1	1016280850 ns/op	 4155904 B/op	   59487 allocs/op
 PASS
-ok  	github.com/alitto/pond/benchmark	12.109s
-Success: Benchmarks passed.
+ok  	github.com/alitto/pond/benchmark	37.331s
 ```
 
-As you can see, _pond_ (503.5ms) outperforms _ants_ (665.9ms), _Gammazero's workerpool_ (1413.7ms), unbuffered goruotine pool (1035.8ms) and buffered goroutine pool (968.5ms) but it falls behind unlimited goroutines (444.3ms).
+As you can see, _pond_'s resizing strategies (Eager, Balanced or Lazy) behave differently under different workloads and generally one of them outperforms the other worker pool implementations, except for launching unbounded goroutines.
 
 Leaving aside the fact that launching unlimited goroutines defeats the goal of limiting concurrency over a resource, its performance is highly dependant on how much resources (CPU and memory) are available at a given time, which make it unpredictable and likely to cause starvation. In other words, it's generally not a good idea for production applications.
 
