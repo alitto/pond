@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -10,144 +11,193 @@ import (
 	"github.com/panjf2000/ants/v2"
 )
 
-const (
-	taskCount    = 1000000
-	taskDuration = 10 * time.Millisecond
-	workerCount  = 200000
-)
+type workload struct {
+	name         string
+	taskCount    int
+	taskDuration time.Duration
+}
 
-func testFunc() {
-	time.Sleep(taskDuration)
+type subject struct {
+	name   string
+	test   poolTest
+	config poolConfig
+}
+
+type poolConfig struct {
+	minWorkers  int
+	maxWorkers  int
+	maxCapacity int
+	strategy    pond.ResizingStrategy
+}
+
+type poolTest func(taskCount int, taskFunc func(), config poolConfig)
+
+var workloads = []workload{
+	{"1M-10ms", 1000000, 10 * time.Millisecond},
+	{"100k-500ms", 100000, 500 * time.Millisecond},
+	{"10k-1000ms", 10000, 1000 * time.Millisecond},
+}
+
+var defaultPoolConfig = poolConfig{
+	maxWorkers: 200000,
+}
+
+var pondSubjects = []subject{
+	{"Pond-Eager", pondPool, poolConfig{maxWorkers: defaultPoolConfig.maxWorkers, maxCapacity: 1000000, strategy: pond.Eager}},
+	{"Pond-Balanced", pondPool, poolConfig{maxWorkers: defaultPoolConfig.maxWorkers, maxCapacity: 1000000, strategy: pond.Balanced}},
+	{"Pond-Lazy", pondPool, poolConfig{maxWorkers: defaultPoolConfig.maxWorkers, maxCapacity: 1000000, strategy: pond.Lazy}},
+}
+
+var otherSubjects = []subject{
+	{"Goroutines", unboundedGoroutines, defaultPoolConfig},
+	{"GoroutinePool", goroutinePool, defaultPoolConfig},
+	{"BufferedPool", bufferedGoroutinePool, defaultPoolConfig},
+	{"Gammazero", gammazeroWorkerpool, defaultPoolConfig},
+	{"AntsPool", antsPool, defaultPoolConfig},
 }
 
 func BenchmarkPond(b *testing.B) {
-	var wg sync.WaitGroup
-	pool := pond.New(workerCount, taskCount)
-	defer pool.StopAndWait()
+	runBenchmarks(b, workloads, pondSubjects)
+}
 
-	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(taskCount)
-		for i := 0; i < taskCount; i++ {
-			pool.Submit(func() {
-				testFunc()
-				wg.Done()
+func BenchmarkAll(b *testing.B) {
+	allSubjects := make([]subject, 0)
+	allSubjects = append(allSubjects, pondSubjects...)
+	allSubjects = append(allSubjects, otherSubjects...)
+	runBenchmarks(b, workloads, allSubjects)
+}
+
+func runBenchmarks(b *testing.B, workloads []workload, subjects []subject) {
+	for _, workload := range workloads {
+		taskFunc := func() {
+			time.Sleep(workload.taskDuration)
+		}
+		for _, subject := range subjects {
+			name := fmt.Sprintf("%s/%s", workload.name, subject.name)
+			b.Run(name, func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					subject.test(workload.taskCount, taskFunc, subject.config)
+				}
 			})
 		}
-		wg.Wait()
 	}
-	b.StopTimer()
 }
 
-func BenchmarkGoroutines(b *testing.B) {
+func pondPool(taskCount int, taskFunc func(), config poolConfig) {
 	var wg sync.WaitGroup
-
+	pool := pond.New(config.maxWorkers, config.maxCapacity,
+		pond.MinWorkers(config.minWorkers),
+		pond.Strategy(config.strategy))
 	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(taskCount)
-		for i := 0; i < taskCount; i++ {
-			go func() {
-				testFunc()
-				wg.Done()
-			}()
-		}
-		wg.Wait()
+	wg.Add(taskCount)
+	for n := 0; n < taskCount; n++ {
+		pool.Submit(func() {
+			taskFunc()
+			wg.Done()
+		})
 	}
-	b.StopTimer()
+	wg.Wait()
+	pool.StopAndWait()
 }
 
-func BenchmarkGoroutinePool(b *testing.B) {
+func unboundedGoroutines(taskCount int, taskFunc func(), config poolConfig) {
 	var wg sync.WaitGroup
-
-	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		taskChan := make(chan func())
-		wg.Add(workerCount)
-		// Start worker goroutines
-		for i := 0; i < workerCount; i++ {
-			go func() {
-				for task := range taskChan {
-					task()
-				}
-				wg.Done()
-			}()
-		}
-		// Submit tasks
-		for i := 0; i < taskCount; i++ {
-			taskChan <- testFunc
-		}
-		close(taskChan)
-		wg.Wait()
+	wg.Add(taskCount)
+	for i := 0; i < taskCount; i++ {
+		go func() {
+			taskFunc()
+			wg.Done()
+		}()
 	}
-	b.StopTimer()
+	wg.Wait()
 }
 
-func BenchmarkBufferedGoroutinePool(b *testing.B) {
-	var wg sync.WaitGroup
-
-	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		taskChan := make(chan func(), taskCount)
-		wg.Add(workerCount)
-		// Start worker goroutines
-		for i := 0; i < workerCount; i++ {
-			go func() {
-				for task := range taskChan {
-					task()
-				}
-				wg.Done()
-			}()
-		}
-		// Submit tasks
-		for i := 0; i < taskCount; i++ {
-			taskChan <- testFunc
-		}
-		close(taskChan)
-		wg.Wait()
+func goroutinePool(taskCount int, taskFunc func(), config poolConfig) {
+	// Start worker goroutines
+	var poolWg sync.WaitGroup
+	taskChan := make(chan func())
+	poolWg.Add(config.maxWorkers)
+	for i := 0; i < config.maxWorkers; i++ {
+		go func() {
+			for task := range taskChan {
+				task()
+			}
+			poolWg.Done()
+		}()
 	}
-	b.StopTimer()
+
+	// Submit tasks and wait for completion
+	var wg sync.WaitGroup
+	wg.Add(taskCount)
+	for i := 0; i < taskCount; i++ {
+		taskChan <- func() {
+			taskFunc()
+			wg.Done()
+		}
+	}
+	close(taskChan)
+	wg.Wait()
+	poolWg.Wait()
 }
 
-func BenchmarkGammazeroWorkerpool(b *testing.B) {
+func bufferedGoroutinePool(taskCount int, taskFunc func(), config poolConfig) {
+	// Start worker goroutines
+	var poolWg sync.WaitGroup
+	taskChan := make(chan func(), taskCount)
+	poolWg.Add(config.maxWorkers)
+	for i := 0; i < config.maxWorkers; i++ {
+		go func() {
+			for task := range taskChan {
+				task()
+			}
+			poolWg.Done()
+		}()
+	}
+
+	// Submit tasks and wait for completion
 	var wg sync.WaitGroup
-	wp := workerpool.New(workerCount)
+	wg.Add(taskCount)
+	for i := 0; i < taskCount; i++ {
+		taskChan <- func() {
+			taskFunc()
+			wg.Done()
+		}
+	}
+	close(taskChan)
+	wg.Wait()
+	poolWg.Wait()
+}
+
+func gammazeroWorkerpool(taskCount int, taskFunc func(), config poolConfig) {
+	// Create pool
+	wp := workerpool.New(config.maxWorkers)
 	defer wp.StopWait()
 
-	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(taskCount)
-		for i := 0; i < taskCount; i++ {
-			wp.Submit(func() {
-				testFunc()
-				wg.Done()
-			})
-		}
-		wg.Wait()
+	// Submit tasks and wait for completion
+	var wg sync.WaitGroup
+	wg.Add(taskCount)
+	for i := 0; i < taskCount; i++ {
+		wp.Submit(func() {
+			taskFunc()
+			wg.Done()
+		})
 	}
-	b.StopTimer()
+	wg.Wait()
 }
 
-func BenchmarkAnts(b *testing.B) {
-	var wg sync.WaitGroup
-	p, _ := ants.NewPool(workerCount, ants.WithExpiryDuration(10*time.Second))
-	defer p.Release()
+func antsPool(taskCount int, taskFunc func(), config poolConfig) {
+	// Create pool
+	pool, _ := ants.NewPool(config.maxWorkers, ants.WithExpiryDuration(10*time.Second))
+	defer pool.Release()
 
-	// Submit tasks
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(taskCount)
-		for i := 0; i < taskCount; i++ {
-			_ = p.Submit(func() {
-				testFunc()
-				wg.Done()
-			})
-		}
-		wg.Wait()
+	// Submit tasks and wait for completion
+	var wg sync.WaitGroup
+	wg.Add(taskCount)
+	for i := 0; i < taskCount; i++ {
+		_ = pool.Submit(func() {
+			taskFunc()
+			wg.Done()
+		})
 	}
-	b.StopTimer()
+	wg.Wait()
 }
