@@ -313,7 +313,7 @@ func TestPoolWithCustomMinWorkers(t *testing.T) {
 
 func TestGroupSubmit(t *testing.T) {
 
-	pool := pond.New(5, 25)
+	pool := pond.New(5, 1000)
 	assertEqual(t, 0, pool.Running())
 
 	// Submit groups of tasks
