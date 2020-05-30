@@ -238,7 +238,7 @@ func TestSubmitWithPanic(t *testing.T) {
 
 func TestPoolWithCustomIdleTimeout(t *testing.T) {
 
-	pool := pond.New(1, 5, pond.IdleTimeout(2*time.Millisecond))
+	pool := pond.New(1, 5, pond.IdleTimeout(1*time.Millisecond))
 
 	// Submit a task
 	started := make(chan bool)
@@ -258,8 +258,8 @@ func TestPoolWithCustomIdleTimeout(t *testing.T) {
 	// Let the task complete
 	completed <- true
 
-	// Wait for idle timeout + 1ms
-	time.Sleep(3 * time.Millisecond)
+	// Wait for some time
+	time.Sleep(10 * time.Millisecond)
 
 	// Worker should have been killed
 	assertEqual(t, 0, pool.Running())

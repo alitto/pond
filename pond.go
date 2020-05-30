@@ -70,11 +70,12 @@ type WorkerPool struct {
 	idleWorkerCount    int32
 	completedTaskCount uint64
 	// Private properties
-	tasks           chan func()
-	dispatchedTasks chan func()
-	purgerQuit      chan struct{}
-	stopOnce        sync.Once
-	waitGroup       sync.WaitGroup
+	tasks                    chan func()
+	dispatchedTasks          chan func()
+	stopOnce                 sync.Once
+	waitGroup                sync.WaitGroup
+	lastResizeTime           time.Time
+	lastResizeCompletedTasks uint64
 	// Debug information
 	debug          bool
 	maxWorkerCount int
@@ -91,8 +92,9 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 		maxWorkers:   maxWorkers,
 		maxCapacity:  maxCapacity,
 		idleTimeout:  defaultIdleTimeout,
-		strategy:     Balanced,
+		strategy:     Balanced(),
 		panicHandler: defaultPanicHandler,
+		debug:        false,
 	}
 
 	// Apply all options
@@ -117,7 +119,6 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 	// Create internal channels
 	pool.tasks = make(chan func(), pool.maxCapacity)
 	pool.dispatchedTasks = make(chan func(), pool.maxWorkers)
-	pool.purgerQuit = make(chan struct{})
 
 	// Start dispatcher goroutine
 	pool.waitGroup.Add(1)
@@ -125,14 +126,6 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 		defer pool.waitGroup.Done()
 
 		pool.dispatch()
-	}()
-
-	// Start purger goroutine
-	pool.waitGroup.Add(1)
-	go func() {
-		defer pool.waitGroup.Done()
-
-		pool.purge()
 	}()
 
 	// Start minWorkers workers
@@ -203,8 +196,8 @@ func (p *WorkerPool) SubmitBefore(task func(), deadline time.Duration) {
 // Stop causes this pool to stop accepting tasks, without waiting for goroutines to exit
 func (p *WorkerPool) Stop() {
 	p.stopOnce.Do(func() {
-		// Send signal to stop the purger
-		close(p.purgerQuit)
+		// Close the tasks channel to prevent receiving new tasks
+		close(p.tasks)
 	})
 }
 
@@ -219,157 +212,181 @@ func (p *WorkerPool) StopAndWait() {
 // dispatch represents the work done by the dispatcher goroutine
 func (p *WorkerPool) dispatch() {
 
-	batch := make([]func(), 0)
-	batchSize := int(math.Max(float64(p.minWorkers), 1000))
-	var lastCompletedTasks uint64 = 0
-	var lastCycle time.Time = time.Now()
+	// Declare vars
+	var (
+		maxBatchSize                   = 1000
+		batch                          = make([]func(), maxBatchSize)
+		batchSize                      = int(math.Max(float64(p.minWorkers), 100))
+		idleWorkers                    = 0
+		dispatchedToIdleWorkers        = 0
+		dispatchedToNewWorkers         = 0
+		dispatchedBlocking             = 0
+		nextTask                func() = nil
+	)
 
-	for task := range p.tasks {
+	idleTimer := time.NewTimer(p.idleTimeout)
+	defer idleTimer.Stop()
 
-		idleCount := p.Idle()
-		dispatchedImmediately := 0
+	// Start dispatching cycle
+DispatchCycle:
+	for {
+		// Reset idle timer
+		idleTimer.Reset(p.idleTimeout)
 
-		// Dispatch up to idleCount tasks without blocking
-		nextTask := task
-	ImmediateDispatch:
-		for i := 0; i < idleCount; i++ {
-
-			// Attempt to dispatch
-			select {
-			case p.dispatchedTasks <- nextTask:
-				dispatchedImmediately++
-			default:
-				break ImmediateDispatch
+		select {
+		// Receive a task
+		case task, ok := <-p.tasks:
+			if !ok {
+				// Received the signal to exit
+				break DispatchCycle
 			}
 
-			// Attempt to receive another task
-			select {
-			case t, ok := <-p.tasks:
-				if !ok {
-					// Nothing to dispatch
-					nextTask = nil
-					break ImmediateDispatch
-				}
-				nextTask = t
-			default:
-				nextTask = nil
-				break ImmediateDispatch
+			idleWorkers = p.Idle()
+
+			// Dispatch tasks to idle workers
+			nextTask, dispatchedToIdleWorkers = p.dispatchToIdleWorkers(task, idleWorkers)
+			if nextTask == nil {
+				continue DispatchCycle
 			}
-		}
-		if nextTask == nil {
-			continue
-		}
 
-		// Start batching tasks
-		batch = append(batch, nextTask)
+			// Read up to batchSize tasks without blocking
+			p.receiveBatch(nextTask, &batch, batchSize)
 
-		// Read up to batchSize tasks without blocking
-	BulkReceive:
-		for i := 0; i < batchSize-1; i++ {
-			select {
-			case t, ok := <-p.tasks:
-				if !ok {
-					break BulkReceive
-				}
-				if t != nil {
-					batch = append(batch, t)
-				}
-			default:
-				break BulkReceive
-			}
-		}
+			// Resize the pool
+			dispatchedToNewWorkers = p.resizePool(batch, dispatchedToIdleWorkers)
 
-		// Resize the pool
-		now := time.Now()
-		delta := now.Sub(lastCycle)
-		workload := len(batch)
-		runningCount := p.Running()
-		lastCycle = now
-		currentCompletedTasks := atomic.LoadUint64(&p.completedTaskCount)
-		completedTasks := int(currentCompletedTasks - lastCompletedTasks)
-		if completedTasks < 0 {
-			completedTasks = 0
-		}
-		lastCompletedTasks = currentCompletedTasks
-		targetDelta := p.calculatePoolSizeDelta(runningCount, idleCount, workload+dispatchedImmediately, completedTasks, delta)
-
-		// Start up to targetDelta workers
-		dispatched := 0
-		if targetDelta > 0 {
-			p.startWorkers(targetDelta, batch)
-			dispatched = workload
-			if targetDelta < workload {
-				dispatched = targetDelta
-			}
-		} else if targetDelta < 0 {
-			// Kill targetDelta workers
-			for i := 0; i < -targetDelta; i++ {
-				p.dispatchedTasks <- nil
-			}
-		}
-
-		dispatchedBlocking := 0
-
-		if workload > dispatched {
-			for _, task := range batch[dispatched:] {
-				// Attempt to dispatch the task without blocking
-				select {
-				case p.dispatchedTasks <- task:
-				default:
-					// Block until a worker accepts this task
-					p.dispatchedTasks <- task
-					dispatchedBlocking++
+			dispatchedBlocking = 0
+			if len(batch) > dispatchedToNewWorkers {
+				for _, task := range batch[dispatchedToNewWorkers:] {
+					// Attempt to dispatch the task without blocking
+					select {
+					case p.dispatchedTasks <- task:
+					default:
+						// Block until a worker accepts this task
+						p.dispatchedTasks <- task
+						dispatchedBlocking++
+					}
 				}
 			}
-		}
 
-		// Adjust batch size
-		if dispatchedBlocking > 0 {
-			if batchSize > 1 {
-				batchSize = 1
+			// Adjust batch size
+			if dispatchedBlocking > 0 {
+				if batchSize > 1 {
+					batchSize = 1
+				}
+			} else {
+				batchSize = batchSize * 2
+				if batchSize > maxBatchSize {
+					batchSize = maxBatchSize
+				}
 			}
-		} else {
-			maxBatchSize := runningCount + targetDelta
-			batchSize = batchSize * 2
-			if batchSize > maxBatchSize {
-				batchSize = maxBatchSize
-			}
+		// Timed out waiting for any activity to happen, attempt to resize the pool
+		case <-idleTimer.C:
+			p.resizePool(batch[:0], 0)
 		}
-
-		// Clear batch slice
-		batch = nil
 	}
 
 	// Send signal to stop all workers
 	close(p.dispatchedTasks)
+
+	if p.debug {
+		fmt.Printf("Max workers: %d", p.maxWorkerCount)
+	}
 }
 
-// purge represents the work done by the purger goroutine
-func (p *WorkerPool) purge() {
-	ticker := time.NewTicker(p.idleTimeout)
-	defer ticker.Stop()
+func (p *WorkerPool) dispatchToIdleWorkers(task func(), limit int) (nextTask func(), dispatched int) {
 
-	for {
+	// Dispatch up to limit tasks without blocking
+	nextTask = task
+	for i := 0; i < limit; i++ {
+
+		// Attempt to dispatch without blocking
 		select {
-		// Timed out waiting for any activity to happen, attempt to resize the pool
-		case <-ticker.C:
-			if p.Idle() > 0 {
-				select {
-				case p.tasks <- nil:
-				default:
-					// If tasks channel is full, there's no need to resize the pool
-				}
+		case p.dispatchedTasks <- nextTask:
+			nextTask = nil
+			dispatched++
+		default:
+			// Could not dispatch, return the task
+			return
+		}
+
+		// Attempt to receive another task
+		select {
+		case t, ok := <-p.tasks:
+			if !ok {
+				// Nothing else to dispatch
+				nextTask = nil
+				return
 			}
-
-		// Received the signal to exit
-		case <-p.purgerQuit:
-
-			// Close the tasks channel to prevent receiving new tasks
-			close(p.tasks)
-
+			nextTask = t
+		default:
+			nextTask = nil
 			return
 		}
 	}
+
+	return
+}
+
+func (p *WorkerPool) receiveBatch(task func(), batch *[]func(), batchSize int) {
+
+	// Reset batch slice
+	*batch = (*batch)[:0]
+	*batch = append(*batch, task)
+
+	// Read up to batchSize tasks without blocking
+	for i := 0; i < batchSize-1; i++ {
+		select {
+		case t, ok := <-p.tasks:
+			if !ok {
+				return
+			}
+			if t != nil {
+				*batch = append(*batch, t)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func (p *WorkerPool) resizePool(batch []func(), dispatchedToIdleWorkers int) int {
+
+	// Time to resize the pool
+	now := time.Now()
+	workload := len(batch)
+	currentCompletedTasks := atomic.LoadUint64(&p.completedTaskCount)
+	completedTasksDelta := int(currentCompletedTasks - p.lastResizeCompletedTasks)
+	if completedTasksDelta < 0 {
+		completedTasksDelta = 0
+	}
+	duration := 0 * time.Millisecond
+	if !p.lastResizeTime.IsZero() {
+		duration = now.Sub(p.lastResizeTime)
+	}
+	poolSizeDelta := p.calculatePoolSizeDelta(p.Running(), p.Idle(),
+		workload+dispatchedToIdleWorkers, completedTasksDelta, duration)
+
+	// Capture values for next resize cycle
+	p.lastResizeTime = now
+	p.lastResizeCompletedTasks = currentCompletedTasks
+
+	// Start up to poolSizeDelta workers
+	dispatched := 0
+	if poolSizeDelta > 0 {
+		p.startWorkers(poolSizeDelta, batch)
+		dispatched = workload
+		if poolSizeDelta < workload {
+			dispatched = poolSizeDelta
+		}
+	} else if poolSizeDelta < 0 {
+		// Kill poolSizeDelta workers
+		for i := 0; i < -poolSizeDelta; i++ {
+			p.dispatchedTasks <- nil
+		}
+	}
+
+	return dispatched
 }
 
 // calculatePoolSizeDelta calculates what's the delta to reach the ideal pool size based on the current size and workload
@@ -420,21 +437,23 @@ func (p *WorkerPool) startWorkers(count int, firstTasks []func()) {
 	p.waitGroup.Add(count)
 
 	// Launch workers
+	var firstTask func()
 	for i := 0; i < count; i++ {
-		var firstTask func() = nil
+		firstTask = nil
 		if i < len(firstTasks) {
 			firstTask = firstTasks[i]
 		}
-		worker(firstTask, p.dispatchedTasks, &p.idleWorkerCount, &p.completedTaskCount, func() {
-
-			// Decrement worker count
-			atomic.AddInt32(&p.workerCount, -1)
-
-			// Decrement waiting group semaphore
-			p.waitGroup.Done()
-
-		}, p.panicHandler)
+		go worker(firstTask, p.dispatchedTasks, &p.idleWorkerCount, &p.completedTaskCount, p.decrementWorkers, p.panicHandler)
 	}
+}
+
+func (p *WorkerPool) decrementWorkers() {
+
+	// Decrement worker count
+	atomic.AddInt32(&p.workerCount, -1)
+
+	// Decrement waiting group semaphore
+	p.waitGroup.Done()
 }
 
 // Group creates a new task group
@@ -447,53 +466,51 @@ func (p *WorkerPool) Group() *TaskGroup {
 // worker launches a worker goroutine
 func worker(firstTask func(), tasks chan func(), idleWorkerCount *int32, completedTaskCount *uint64, exitHandler func(), panicHandler func(interface{})) {
 
-	go func() {
-		defer func() {
-			if panic := recover(); panic != nil {
-				// Handle panic
-				panicHandler(panic)
+	defer func() {
+		if panic := recover(); panic != nil {
+			// Handle panic
+			panicHandler(panic)
 
-				// Restart goroutine
-				worker(nil, tasks, idleWorkerCount, completedTaskCount, exitHandler, panicHandler)
-			} else {
-				// Handle exit
-				exitHandler()
-			}
-		}()
+			// Restart goroutine
+			go worker(nil, tasks, idleWorkerCount, completedTaskCount, exitHandler, panicHandler)
+		} else {
+			// Handle exit
+			exitHandler()
+		}
+	}()
+
+	// We have received a task, execute it
+	func() {
+		// Increment idle count
+		defer atomic.AddInt32(idleWorkerCount, 1)
+		if firstTask != nil {
+			// Increment completed task count
+			defer atomic.AddUint64(completedTaskCount, 1)
+
+			firstTask()
+		}
+	}()
+
+	for task := range tasks {
+		if task == nil {
+			// We have received a signal to quit
+			return
+		}
+
+		// Decrement idle count
+		atomic.AddInt32(idleWorkerCount, -1)
 
 		// We have received a task, execute it
 		func() {
 			// Increment idle count
 			defer atomic.AddInt32(idleWorkerCount, 1)
-			if firstTask != nil {
-				// Increment completed task count
-				defer atomic.AddUint64(completedTaskCount, 1)
 
-				firstTask()
-			}
+			// Increment completed task count
+			defer atomic.AddUint64(completedTaskCount, 1)
+
+			task()
 		}()
-
-		for task := range tasks {
-			if task == nil {
-				// We have received a signal to quit
-				return
-			}
-
-			// Decrement idle count
-			atomic.AddInt32(idleWorkerCount, -1)
-
-			// We have received a task, execute it
-			func() {
-				// Increment idle count
-				defer atomic.AddInt32(idleWorkerCount, 1)
-
-				// Increment completed task count
-				defer atomic.AddUint64(completedTaskCount, 1)
-
-				task()
-			}()
-		}
-	}()
+	}
 }
 
 // TaskGroup represents a group of related tasks
