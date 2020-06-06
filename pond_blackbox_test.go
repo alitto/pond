@@ -190,6 +190,29 @@ func TestTrySubmit(t *testing.T) {
 	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
 }
 
+func TestSubmitToIdle(t *testing.T) {
+
+	pool := pond.New(1, 5)
+
+	// Submit a task and wait for it to complete
+	pool.SubmitAndWait(func() {
+		time.Sleep(1 * time.Millisecond)
+	})
+
+	assertEqual(t, int(1), pool.Running())
+	assertEqual(t, int(1), pool.Idle())
+
+	// Submit another task (this one should go to the idle worker)
+	pool.SubmitAndWait(func() {
+		time.Sleep(1 * time.Millisecond)
+	})
+
+	pool.StopAndWait()
+
+	assertEqual(t, int(0), pool.Running())
+	assertEqual(t, int(0), pool.Idle())
+}
+
 func TestRunning(t *testing.T) {
 
 	workerCount := 5

@@ -9,9 +9,11 @@ func TestRatedResizer(t *testing.T) {
 	resizer := RatedResizer(3)
 
 	assertEqual(t, true, resizer.Resize(0, 0, 10))
-	assertEqual(t, false, resizer.Resize(1, 0, 10))
+	assertEqual(t, true, resizer.Resize(0, 0, 10))
+	assertEqual(t, true, resizer.Resize(1, 0, 10))
 	assertEqual(t, false, resizer.Resize(2, 0, 10))
-	assertEqual(t, true, resizer.Resize(3, 0, 10))
+	assertEqual(t, false, resizer.Resize(3, 0, 10))
+	assertEqual(t, true, resizer.Resize(4, 0, 10))
 }
 
 func TestRatedResizerWithRate1(t *testing.T) {

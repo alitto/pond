@@ -46,7 +46,7 @@ func RatedResizer(rate int) ResizingStrategy {
 
 func (r *ratedResizer) Resize(runningWorkers, minWorkers, maxWorkers int) bool {
 
-	if r.rate == 1 {
+	if r.rate == 1 || runningWorkers == 0 {
 		return true
 	}
 
