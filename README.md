@@ -30,7 +30,7 @@ Some common scenarios include:
   - Stopping a worker pool
 - Task panics are handled gracefully (configurable panic handler)
 - Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
-- Very high performance under heavy workloads (See [benchmarks](#benchmarks))
+- Very high performance under heavy workloads (See [benchmarks](./benchmark/README.md))
 - **New (since v1.3.0)**: configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
 - [API reference](https://pkg.go.dev/github.com/alitto/pond)
 
@@ -182,54 +182,7 @@ Full API reference is available at https://pkg.go.dev/github.com/alitto/pond
 
 ## Benchmarks
 
-We ran a few [benchmarks](benchmark/benchmark_test.go) to see how _pond_'s performance compares against some of the most popular worker pool libraries available for Go ([ants](https://github.com/panjf2000/ants/) and [gammazero's workerpool](https://github.com/gammazero/workerpool)), as well as just launching unbounded goroutines and manually creating a goroutine worker pool (inspired by [gobyexample.com](https://gobyexample.com/worker-pools)), using either a buffered or an unbuffered channel to dispatch tasks. 
-
-The test consists of submitting 3 different workloads to each worker pool:
-- *1M-10ms*: 1 million tasks that sleep for 10 milliseconds (`time.Sleep(10*time.Millisecond)`)
-- *100k-500ms*: 100 thousand tasks that sleep for 500 milliseconds (`time.Sleep(500*time.Millisecond)`)
-- *10k-1000ms*: 10 thousand tasks that sleep for 1 second (`time.Sleep(1*time.Second)`) 
-
- All pools are configured to use a maximum of 200k workers and initialization times are taken into account.
-
-Here are the results:
-
-```bash
-goos: linux
-goarch: amd64
-pkg: github.com/alitto/pond/benchmark
-1M-10ms/Pond-Eager-8         	       2	 620347142 	82768720 	 1086686 
-1M-10ms/Pond-Balanced-8      	       2	 578973910 	81339088 	 1083203 
-1M-10ms/Pond-Lazy-8          	       2	 613344573 	84347248 	 1084987 
-1M-10ms/Goroutines-8         	       2	 540765682 	98457168 	 1060433 
-1M-10ms/GoroutinePool-8      	       1	1157705614 	68137088 	 1409763 
-1M-10ms/BufferedPool-8       	       1	1158068370 	76426272 	 1412739 
-1M-10ms/Gammazero-8          	       1	1330312458 	34524328 	 1029692 
-1M-10ms/AntsPool-8           	       2	 724231628 	37870404 	 1077297 
-100k-500ms/Pond-Eager-8      	       2	 604180003 	31523028 	  349877 
-100k-500ms/Pond-Balanced-8   	       1	1060079592 	35520416 	  398779 
-100k-500ms/Pond-Lazy-8       	       1	1053705909 	35040512 	  392696 
-100k-500ms/Goroutines-8      	       2	 551869174 	 8000016 	  100001 
-100k-500ms/GoroutinePool-8   	       2	 635442074 	20764560 	  299632 
-100k-500ms/BufferedPool-8    	       2	 641683384 	21647840 	  299661 
-100k-500ms/Gammazero-8       	       2	 667449574 	16241864 	  249664 
-100k-500ms/AntsPool-8        	       2	 659853037 	37300372 	  549784 
-10k-1000ms/Pond-Eager-8      	       1	1014320653 	12135080 	   39692 
-10k-1000ms/Pond-Balanced-8   	       1	1015979207 	12083704 	   39518 
-10k-1000ms/Pond-Lazy-8       	       1	1036374161 	12046632 	   39366 
-10k-1000ms/Goroutines-8      	       1	1007837894 	  800016 	   10001 
-10k-1000ms/GoroutinePool-8   	       1	1149536612 	21393024 	  222458 
-10k-1000ms/BufferedPool-8    	       1	1127286218 	20343584 	  219359 
-10k-1000ms/Gammazero-8       	       1	1023249222 	 2019688 	   29374 
-10k-1000ms/AntsPool-8        	       1	1016280850 	 4155904 	   59487 
-PASS
-ok  	github.com/alitto/pond/benchmark	37.331s
-```
-
-As you can see, _pond_'s resizing strategies (Eager, Balanced or Lazy) behave differently under different workloads and generally one of them outperforms the other worker pool implementations, except for launching unbounded goroutines.
-
-Leaving aside the fact that launching unlimited goroutines defeats the goal of limiting concurrency over a resource, its performance is highly dependant on how much resources (CPU and memory) are available at a given time, which make it unpredictable and likely to cause starvation. In other words, it's generally not a good idea for production applications.
-
-These tests were executed on a laptop with an 8-core CPU (Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz) and 16GB of RAM.
+See [Benchmarks](./benchmark/README.md).
 
 ## Resources
 
