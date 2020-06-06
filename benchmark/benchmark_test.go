@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -11,193 +12,236 @@ import (
 	"github.com/panjf2000/ants/v2"
 )
 
+type subject struct {
+	name    string
+	factory poolFactory
+}
+
+type poolSubmit func(func())
+type poolTeardown func()
+type poolFactory func() (poolSubmit, poolTeardown)
+
 type workload struct {
 	name         string
+	userCount    int
 	taskCount    int
-	taskDuration time.Duration
+	taskInterval time.Duration
+	task         func()
 }
 
-type subject struct {
-	name   string
-	test   poolTest
-	config poolConfig
-}
+var maxWorkers = 200000
 
-type poolConfig struct {
-	minWorkers  int
-	maxWorkers  int
-	maxCapacity int
-	strategy    pond.ResizingStrategy
-}
-
-type poolTest func(taskCount int, taskFunc func(), config poolConfig)
-
-var workloads = []workload{
-	{"1M-10ms", 1000000, 10 * time.Millisecond},
-	{"100k-500ms", 100000, 500 * time.Millisecond},
-	{"10k-1000ms", 10000, 1000 * time.Millisecond},
-}
-
-var defaultPoolConfig = poolConfig{
-	maxWorkers: 200000,
-}
+var workloads = []workload{{
+	name:         "1u-10Mt",
+	userCount:    1,
+	taskCount:    1000000,
+	taskInterval: 0,
+}, {
+	name:         "100u-10Kt",
+	userCount:    100,
+	taskCount:    10000,
+	taskInterval: 0,
+}, {
+	name:         "1Ku-1Kt",
+	userCount:    1000,
+	taskCount:    1000,
+	taskInterval: 0,
+}, {
+	name:         "10Ku-100t",
+	userCount:    10000,
+	taskCount:    100,
+	taskInterval: 0,
+}, {
+	name:         "1Mu-1t",
+	userCount:    1000000,
+	taskCount:    1,
+	taskInterval: 0,
+}}
 
 var pondSubjects = []subject{
-	{"Pond-Eager", pondPool, poolConfig{maxWorkers: defaultPoolConfig.maxWorkers, maxCapacity: 1000000, strategy: pond.Eager()}},
-	{"Pond-Balanced", pondPool, poolConfig{maxWorkers: defaultPoolConfig.maxWorkers, maxCapacity: 1000000, strategy: pond.Balanced()}},
-	{"Pond-Lazy", pondPool, poolConfig{maxWorkers: defaultPoolConfig.maxWorkers, maxCapacity: 1000000, strategy: pond.Lazy()}},
+	{
+		name: "Pond-Eager",
+		factory: func() (poolSubmit, poolTeardown) {
+			pool := pond.New(maxWorkers, 1000000, pond.Strategy(pond.Eager()))
+
+			return pool.Submit, pool.StopAndWait
+		},
+	}, {
+		name: "Pond-Balanced",
+		factory: func() (poolSubmit, poolTeardown) {
+			pool := pond.New(maxWorkers, 1000000, pond.Strategy(pond.Balanced()))
+
+			return pool.Submit, pool.StopAndWait
+		},
+	}, {
+		name: "Pond-Lazy",
+		factory: func() (poolSubmit, poolTeardown) {
+			pool := pond.New(maxWorkers, 1000000, pond.Strategy(pond.Lazy()))
+
+			return pool.Submit, pool.StopAndWait
+		},
+	},
 }
 
 var otherSubjects = []subject{
-	{"Goroutines", unboundedGoroutines, defaultPoolConfig},
-	{"GoroutinePool", goroutinePool, defaultPoolConfig},
-	{"BufferedPool", bufferedGoroutinePool, defaultPoolConfig},
-	{"Gammazero", gammazeroWorkerpool, defaultPoolConfig},
-	{"AntsPool", antsPool, defaultPoolConfig},
+	{
+		name: "Goroutines",
+		factory: func() (poolSubmit, poolTeardown) {
+			submit := func(taskFunc func()) {
+				go func() {
+					taskFunc()
+				}()
+			}
+			return submit, func() {}
+		},
+	},
+	{
+		name: "GoroutinePool",
+		factory: func() (poolSubmit, poolTeardown) {
+
+			var poolWg sync.WaitGroup
+			taskChan := make(chan func())
+			poolWg.Add(maxWorkers)
+			for i := 0; i < maxWorkers; i++ {
+				go func() {
+					for task := range taskChan {
+						task()
+					}
+					poolWg.Done()
+				}()
+			}
+
+			submit := func(task func()) {
+				taskChan <- task
+			}
+			teardown := func() {
+				close(taskChan)
+				poolWg.Wait()
+			}
+
+			return submit, teardown
+		},
+	},
+	{
+		name: "BufferedPool",
+		factory: func() (poolSubmit, poolTeardown) {
+
+			var poolWg sync.WaitGroup
+			taskChan := make(chan func(), 1000000)
+			poolWg.Add(maxWorkers)
+			for i := 0; i < maxWorkers; i++ {
+				go func() {
+					for task := range taskChan {
+						task()
+					}
+					poolWg.Done()
+				}()
+			}
+
+			submit := func(task func()) {
+				taskChan <- task
+			}
+			teardown := func() {
+				close(taskChan)
+				poolWg.Wait()
+			}
+
+			return submit, teardown
+		},
+	},
+	{
+		name: "Gammazero",
+		factory: func() (poolSubmit, poolTeardown) {
+			pool := workerpool.New(maxWorkers)
+			return pool.Submit, pool.StopWait
+		},
+	},
+	{
+		name: "AntsPool",
+		factory: func() (poolSubmit, poolTeardown) {
+			pool, _ := ants.NewPool(maxWorkers, ants.WithExpiryDuration(10*time.Second))
+			submit := func(task func()) {
+				pool.Submit(task)
+			}
+			return submit, pool.Release
+		},
+	},
 }
 
-func BenchmarkPond(b *testing.B) {
-	runBenchmarks(b, workloads, pondSubjects)
+func BenchmarkPondSleep10ms(b *testing.B) {
+	sleep10ms := func() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	runBenchmarks(b, workloads, pondSubjects, sleep10ms)
 }
 
-func BenchmarkAll(b *testing.B) {
-	allSubjects := make([]subject, 0)
-	allSubjects = append(allSubjects, pondSubjects...)
-	allSubjects = append(allSubjects, otherSubjects...)
-	runBenchmarks(b, workloads, allSubjects)
+func BenchmarkPondRandFloat64(b *testing.B) {
+	randFloat64 := func() {
+		rand.Float64()
+	}
+	runBenchmarks(b, workloads, pondSubjects, randFloat64)
 }
 
-func runBenchmarks(b *testing.B, workloads []workload, subjects []subject) {
+func BenchmarkAllSleep10ms(b *testing.B) {
+	subjects := make([]subject, 0)
+	subjects = append(subjects, pondSubjects...)
+	subjects = append(subjects, otherSubjects...)
+	sleep10ms := func() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	runBenchmarks(b, workloads, subjects, sleep10ms)
+}
+
+func BenchmarkAllRandFloat64(b *testing.B) {
+	subjects := make([]subject, 0)
+	subjects = append(subjects, pondSubjects...)
+	subjects = append(subjects, otherSubjects...)
+	randFloat64 := func() {
+		rand.Float64()
+	}
+	runBenchmarks(b, workloads, subjects, randFloat64)
+}
+
+func runBenchmarks(b *testing.B, workloads []workload, subjects []subject, task func()) {
 	for _, workload := range workloads {
-		taskFunc := func() {
-			time.Sleep(workload.taskDuration)
-		}
 		for _, subject := range subjects {
-			name := fmt.Sprintf("%s/%s", workload.name, subject.name)
-			b.Run(name, func(b *testing.B) {
+			testName := fmt.Sprintf("%s/%s", workload.name, subject.name)
+			b.Run(testName, func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					subject.test(workload.taskCount, taskFunc, subject.config)
+					simulateWorkload(&workload, subject.factory, task)
 				}
 			})
 		}
 	}
 }
 
-func pondPool(taskCount int, taskFunc func(), config poolConfig) {
-	var wg sync.WaitGroup
-	pool := pond.New(config.maxWorkers, config.maxCapacity,
-		pond.MinWorkers(config.minWorkers),
-		pond.Strategy(config.strategy))
-	// Submit tasks
-	wg.Add(taskCount)
-	for n := 0; n < taskCount; n++ {
-		pool.Submit(func() {
-			taskFunc()
-			wg.Done()
-		})
-	}
-	wg.Wait()
-	pool.StopAndWait()
-}
+func simulateWorkload(workload *workload, poolFactoy poolFactory, task func()) {
 
-func unboundedGoroutines(taskCount int, taskFunc func(), config poolConfig) {
-	var wg sync.WaitGroup
-	wg.Add(taskCount)
-	for i := 0; i < taskCount; i++ {
-		go func() {
-			taskFunc()
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-}
-
-func goroutinePool(taskCount int, taskFunc func(), config poolConfig) {
-	// Start worker goroutines
-	var poolWg sync.WaitGroup
-	taskChan := make(chan func())
-	poolWg.Add(config.maxWorkers)
-	for i := 0; i < config.maxWorkers; i++ {
-		go func() {
-			for task := range taskChan {
-				task()
-			}
-			poolWg.Done()
-		}()
-	}
-
-	// Submit tasks and wait for completion
-	var wg sync.WaitGroup
-	wg.Add(taskCount)
-	for i := 0; i < taskCount; i++ {
-		taskChan <- func() {
-			taskFunc()
-			wg.Done()
-		}
-	}
-	close(taskChan)
-	wg.Wait()
-	poolWg.Wait()
-}
-
-func bufferedGoroutinePool(taskCount int, taskFunc func(), config poolConfig) {
-	// Start worker goroutines
-	var poolWg sync.WaitGroup
-	taskChan := make(chan func(), taskCount)
-	poolWg.Add(config.maxWorkers)
-	for i := 0; i < config.maxWorkers; i++ {
-		go func() {
-			for task := range taskChan {
-				task()
-			}
-			poolWg.Done()
-		}()
-	}
-
-	// Submit tasks and wait for completion
-	var wg sync.WaitGroup
-	wg.Add(taskCount)
-	for i := 0; i < taskCount; i++ {
-		taskChan <- func() {
-			taskFunc()
-			wg.Done()
-		}
-	}
-	close(taskChan)
-	wg.Wait()
-	poolWg.Wait()
-}
-
-func gammazeroWorkerpool(taskCount int, taskFunc func(), config poolConfig) {
 	// Create pool
-	wp := workerpool.New(config.maxWorkers)
-	defer wp.StopWait()
+	poolSubmit, poolTeardown := poolFactoy()
 
-	// Submit tasks and wait for completion
+	// Spawn one goroutine per simulated user
 	var wg sync.WaitGroup
-	wg.Add(taskCount)
-	for i := 0; i < taskCount; i++ {
-		wp.Submit(func() {
-			taskFunc()
-			wg.Done()
-		})
+	wg.Add(workload.userCount * workload.taskCount)
+
+	testFunc := func() {
+		task()
+		wg.Done()
+	}
+
+	for i := 0; i < workload.userCount; i++ {
+		go func() {
+			// Every user submits tasksPerUser at the specified frequency
+			for i := 0; i < workload.taskCount; i++ {
+				poolSubmit(testFunc)
+				if workload.taskInterval > 0 {
+					time.Sleep(workload.taskInterval)
+				}
+			}
+		}()
 	}
 	wg.Wait()
-}
 
-func antsPool(taskCount int, taskFunc func(), config poolConfig) {
-	// Create pool
-	pool, _ := ants.NewPool(config.maxWorkers, ants.WithExpiryDuration(10*time.Second))
-	defer pool.Release()
-
-	// Submit tasks and wait for completion
-	var wg sync.WaitGroup
-	wg.Add(taskCount)
-	for i := 0; i < taskCount; i++ {
-		_ = pool.Submit(func() {
-			taskFunc()
-			wg.Done()
-		})
-	}
-	wg.Wait()
+	// Tear down
+	poolTeardown()
 }

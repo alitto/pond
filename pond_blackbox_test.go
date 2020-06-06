@@ -164,6 +164,32 @@ func TestSubmitBeforeWithNilTask(t *testing.T) {
 	assertEqual(t, 0, pool.Running())
 }
 
+func TestTrySubmit(t *testing.T) {
+
+	pool := pond.New(1, 5)
+
+	// Submit a long-running task
+	var doneCount int32
+	pool.Submit(func() {
+		time.Sleep(5 * time.Millisecond)
+		atomic.AddInt32(&doneCount, 1)
+	})
+
+	// Attempt to submit a task without blocking
+	dispatched := pool.TrySubmit(func() {
+		time.Sleep(5 * time.Millisecond)
+		atomic.AddInt32(&doneCount, 1)
+	})
+
+	// Task was not dispatched because the pool was full
+	assertEqual(t, false, dispatched)
+
+	pool.StopAndWait()
+
+	// Only the first task must have executed
+	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
+}
+
 func TestRunning(t *testing.T) {
 
 	workerCount := 5
@@ -337,4 +363,27 @@ func TestGroupSubmit(t *testing.T) {
 	}
 
 	assertEqual(t, int32(taskCount), atomic.LoadInt32(&doneCount))
+}
+
+func TestPoolWithCustomStrategy(t *testing.T) {
+
+	pool := pond.New(3, 3, pond.Strategy(pond.RatedResizer(2)))
+
+	// Submit 3 tasks
+	group := pool.Group()
+	for i := 0; i < 3; i++ {
+		group.Submit(func() {
+			time.Sleep(10 * time.Millisecond)
+		})
+	}
+
+	// Wait for them to complete
+	group.Wait()
+
+	// 2 workers should have been started
+	assertEqual(t, 2, pool.Running())
+
+	pool.StopAndWait()
+
+	assertEqual(t, 0, pool.Running())
 }

@@ -158,15 +158,23 @@ panicHandler := func(p interface{}) {
 pool := pond.New(10, 1000, pond.PanicHandler(panicHandler)))
 ```
 - **Strategy**: Configures the strategy used to resize the pool when backpressure is detected. You can create a custom strategy by implementing the `pond.ResizingStrategy` interface or choose one of the 3 presets:
-    - **Eager**: maximizes responsiveness at the expense of higher resource usage, which can reduce throughput under certain conditions. This strategy is meant for worker pools that will operate at a small percentage of their capacity most of the time and may occasionally receive bursts of tasks.
-	- **Balanced**: tries to find a balance between responsiveness and throughput. It's suitable for general purpose worker pools or those that will operate close to 50% of their capacity most of the time. This is the default strategy.
+    - **Eager**: maximizes responsiveness at the expense of higher resource usage, which can reduce throughput under certain conditions. This strategy is meant for worker pools that will operate at a small percentage of their capacity most of the time and may occasionally receive bursts of tasks. This is the default strategy.
+	- **Balanced**: tries to find a balance between responsiveness and throughput. It's suitable for general purpose worker pools or those that will operate close to 50% of their capacity most of the time.
 	- **Lazy**: maximizes throughput at the expense of responsiveness. This strategy is meant for worker pools that will operate close to their max. capacity most of the time.
 ``` go
 // Example: create pools with different resizing strategies
-eagerPool := pond.New(10, 1000, pond.Strategy(pond.Eager))
-balancedPool := pond.New(10, 1000, pond.Strategy(pond.Balanced))
-lazyPool := pond.New(10, 1000, pond.Strategy(pond.Lazy))
+eagerPool := pond.New(10, 1000, pond.Strategy(pond.Eager()))
+balancedPool := pond.New(10, 1000, pond.Strategy(pond.Balanced()))
+lazyPool := pond.New(10, 1000, pond.Strategy(pond.Lazy()))
 ``` 
+
+### Resizing strategies
+
+The following chart illustrates the behaviour of the different pool resizing strategies as the number of submitted tasks increases. Each line represents the number of worker goroutines in the pool (pool size) and the x-axis reflects the number of submitted tasks (cumulative). 
+
+![Pool resizing strategies behaviour](./docs/strategies.svg)
+
+As the name suggests, the "Eager" strategy always spawns an extra worker when there are no idles, which causes the pool to grow almost linearly with the number of submitted tasks. On the other end, the "Lazy" strategy creates one worker every N submitted tasks, where N is the maximum number of available CPUs ([GOMAXPROCS](https://golang.org/pkg/runtime/#GOMAXPROCS)). The "Balanced" strategy represents a middle ground between the previous two because it creates a worker every N/2 submitted tasks.
 
 ## API Reference
 
@@ -189,30 +197,30 @@ Here are the results:
 goos: linux
 goarch: amd64
 pkg: github.com/alitto/pond/benchmark
-BenchmarkAll/1M-10ms/Pond-Eager-8         	       2	 620347142 ns/op	82768720 B/op	 1086686 allocs/op
-BenchmarkAll/1M-10ms/Pond-Balanced-8      	       2	 578973910 ns/op	81339088 B/op	 1083203 allocs/op
-BenchmarkAll/1M-10ms/Pond-Lazy-8          	       2	 613344573 ns/op	84347248 B/op	 1084987 allocs/op
-BenchmarkAll/1M-10ms/Goroutines-8         	       2	 540765682 ns/op	98457168 B/op	 1060433 allocs/op
-BenchmarkAll/1M-10ms/GoroutinePool-8      	       1	1157705614 ns/op	68137088 B/op	 1409763 allocs/op
-BenchmarkAll/1M-10ms/BufferedPool-8       	       1	1158068370 ns/op	76426272 B/op	 1412739 allocs/op
-BenchmarkAll/1M-10ms/Gammazero-8          	       1	1330312458 ns/op	34524328 B/op	 1029692 allocs/op
-BenchmarkAll/1M-10ms/AntsPool-8           	       2	 724231628 ns/op	37870404 B/op	 1077297 allocs/op
-BenchmarkAll/100k-500ms/Pond-Eager-8      	       2	 604180003 ns/op	31523028 B/op	  349877 allocs/op
-BenchmarkAll/100k-500ms/Pond-Balanced-8   	       1	1060079592 ns/op	35520416 B/op	  398779 allocs/op
-BenchmarkAll/100k-500ms/Pond-Lazy-8       	       1	1053705909 ns/op	35040512 B/op	  392696 allocs/op
-BenchmarkAll/100k-500ms/Goroutines-8      	       2	 551869174 ns/op	 8000016 B/op	  100001 allocs/op
-BenchmarkAll/100k-500ms/GoroutinePool-8   	       2	 635442074 ns/op	20764560 B/op	  299632 allocs/op
-BenchmarkAll/100k-500ms/BufferedPool-8    	       2	 641683384 ns/op	21647840 B/op	  299661 allocs/op
-BenchmarkAll/100k-500ms/Gammazero-8       	       2	 667449574 ns/op	16241864 B/op	  249664 allocs/op
-BenchmarkAll/100k-500ms/AntsPool-8        	       2	 659853037 ns/op	37300372 B/op	  549784 allocs/op
-BenchmarkAll/10k-1000ms/Pond-Eager-8      	       1	1014320653 ns/op	12135080 B/op	   39692 allocs/op
-BenchmarkAll/10k-1000ms/Pond-Balanced-8   	       1	1015979207 ns/op	12083704 B/op	   39518 allocs/op
-BenchmarkAll/10k-1000ms/Pond-Lazy-8       	       1	1036374161 ns/op	12046632 B/op	   39366 allocs/op
-BenchmarkAll/10k-1000ms/Goroutines-8      	       1	1007837894 ns/op	  800016 B/op	   10001 allocs/op
-BenchmarkAll/10k-1000ms/GoroutinePool-8   	       1	1149536612 ns/op	21393024 B/op	  222458 allocs/op
-BenchmarkAll/10k-1000ms/BufferedPool-8    	       1	1127286218 ns/op	20343584 B/op	  219359 allocs/op
-BenchmarkAll/10k-1000ms/Gammazero-8       	       1	1023249222 ns/op	 2019688 B/op	   29374 allocs/op
-BenchmarkAll/10k-1000ms/AntsPool-8        	       1	1016280850 ns/op	 4155904 B/op	   59487 allocs/op
+1M-10ms/Pond-Eager-8         	       2	 620347142 	82768720 	 1086686 
+1M-10ms/Pond-Balanced-8      	       2	 578973910 	81339088 	 1083203 
+1M-10ms/Pond-Lazy-8          	       2	 613344573 	84347248 	 1084987 
+1M-10ms/Goroutines-8         	       2	 540765682 	98457168 	 1060433 
+1M-10ms/GoroutinePool-8      	       1	1157705614 	68137088 	 1409763 
+1M-10ms/BufferedPool-8       	       1	1158068370 	76426272 	 1412739 
+1M-10ms/Gammazero-8          	       1	1330312458 	34524328 	 1029692 
+1M-10ms/AntsPool-8           	       2	 724231628 	37870404 	 1077297 
+100k-500ms/Pond-Eager-8      	       2	 604180003 	31523028 	  349877 
+100k-500ms/Pond-Balanced-8   	       1	1060079592 	35520416 	  398779 
+100k-500ms/Pond-Lazy-8       	       1	1053705909 	35040512 	  392696 
+100k-500ms/Goroutines-8      	       2	 551869174 	 8000016 	  100001 
+100k-500ms/GoroutinePool-8   	       2	 635442074 	20764560 	  299632 
+100k-500ms/BufferedPool-8    	       2	 641683384 	21647840 	  299661 
+100k-500ms/Gammazero-8       	       2	 667449574 	16241864 	  249664 
+100k-500ms/AntsPool-8        	       2	 659853037 	37300372 	  549784 
+10k-1000ms/Pond-Eager-8      	       1	1014320653 	12135080 	   39692 
+10k-1000ms/Pond-Balanced-8   	       1	1015979207 	12083704 	   39518 
+10k-1000ms/Pond-Lazy-8       	       1	1036374161 	12046632 	   39366 
+10k-1000ms/Goroutines-8      	       1	1007837894 	  800016 	   10001 
+10k-1000ms/GoroutinePool-8   	       1	1149536612 	21393024 	  222458 
+10k-1000ms/BufferedPool-8    	       1	1127286218 	20343584 	  219359 
+10k-1000ms/Gammazero-8       	       1	1023249222 	 2019688 	   29374 
+10k-1000ms/AntsPool-8        	       1	1016280850 	 4155904 	   59487 
 PASS
 ok  	github.com/alitto/pond/benchmark	37.331s
 ```
