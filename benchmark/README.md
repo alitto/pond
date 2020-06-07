@@ -13,6 +13,8 @@ All pools are configured to use a maximum of 200k workers and initialization tim
 
 Here are the results of the benchmark when submitting an asynchronous task that just sleeps for 10ms (`time.Sleep(10 * time.Millisecond)`):
 
+![Benchmark results - Sleep 10ms on 8 cpus](../docs/benchmark-results-sleep10ms-8cpu.svg)
+
 ```bash
 go test -benchmem -run=^$ github.com/alitto/pond/benchmark -bench '^(BenchmarkAllSleep.*)$' -benchtime=3x -cpu=8
 goos: linux
@@ -64,6 +66,8 @@ ok  	github.com/alitto/pond/benchmark	138.009s
 
 And these are the results of the benchmark when submitting a synchronous task that just calculates a random float64 number between 0 and 1 (`rand.Float64()`):
 
+![Benchmark results - Random Float64 on 8 cpus](../docs/benchmark-results-randf64-8cpu.svg)
+
 ```bash
 go test -benchmem -run=^$ github.com/alitto/pond/benchmark -bench '^(BenchmarkAllRand.*)$' -benchtime=3x -cpu=8
 goos: linux
@@ -113,11 +117,13 @@ PASS
 ok  	github.com/alitto/pond/benchmark	93.386s
 ```
 
-As you can see, _pond_'s resizing strategies (Eager, Balanced or Lazy) behave differently under different workloads and generally one or more of these strategies outperform all the other worker pool implementations, including unbounded goroutines under some specific circumstances.
+As you can see, _pond_'s resizing strategies (Eager, Balanced or Lazy) behave differently under different workloads and generally one or more of these strategies outperform all the other worker pool implementations, except for unbounded goroutines.
 
-When running this benchmark with fewer available CPUs, the difference becomes even more significant. For instance, when using only 4 CPUs, _pond_ consistently outperforms launching unbounded goroutines. 
+Leaving aside the fact that launching unlimited goroutines defeats the goal of limiting concurrency over a resource, its performance is highly dependant on how much resources (CPU and memory) are available at a given time, which make it unpredictable and likely to cause starvation. In other words, it's generally not a good idea for production applications.
 
-Here are the results when using 4 CPUs and submitting the asynchronous task:
+We also wanted to see how _pond_ behaves when resources are more constrained, so we repeated the asynchrounous task benchmark (Sleep 10ms), but this time using only 4 CPUs:
+
+![Benchmark results - Sleep 10ms on 4cpus](../docs/benchmark-results-sleep10ms-4cpu.svg)
 
 ```bash
 go test -benchmem -run=^$ github.com/alitto/pond/benchmark -bench '^(BenchmarkAllSleep.*)$' -benchtime=3x -cpu=4
@@ -167,5 +173,7 @@ BenchmarkAllSleep10ms/1Mu-1t/AntsPool-4            	       3	1123553898 ns/op	30
 PASS
 ok  	github.com/alitto/pond/benchmark	152.726s
 ```
+
+When running with fewer available CPUs, the difference becomes more clear when comparing against other worker pool implementations and it even runs faster than launching unbounded goroutines in some of the workloads (when users <= 10k).
 
 These tests were executed on a laptop with an 8-core CPU (Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz) and 16GB of RAM.

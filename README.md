@@ -30,7 +30,7 @@ Some common scenarios include:
   - Stopping a worker pool
 - Task panics are handled gracefully (configurable panic handler)
 - Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
-- Very high performance under heavy workloads (See [benchmarks](./benchmark/README.md))
+- Very high performance and efficient resource usage under heavy workloads, even outperforming unbounded goroutines in some scenarios (See [benchmarks](./benchmark/README.md))
 - **New (since v1.3.0)**: configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
 - [API reference](https://pkg.go.dev/github.com/alitto/pond)
 
