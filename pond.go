@@ -135,22 +135,22 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 	return pool
 }
 
-// RunningWorkers returns the number of running workers
+// RunningWorkers returns the current number of running workers
 func (p *WorkerPool) RunningWorkers() int {
 	return int(atomic.LoadInt32(&p.workerCount))
 }
 
-// IdleWorkers returns the number of idle workers
+// IdleWorkers returns the current number of idle workers
 func (p *WorkerPool) IdleWorkers() int {
 	return int(atomic.LoadInt32(&p.idleWorkerCount))
 }
 
-// MinWorkers returns minimum number of worker goroutines
+// MinWorkers returns the minimum number of worker goroutines
 func (p *WorkerPool) MinWorkers() int {
 	return p.minWorkers
 }
 
-// MaxWorkers returns maximum number of worker goroutines
+// MaxWorkers returns the maximum number of worker goroutines
 func (p *WorkerPool) MaxWorkers() int {
 	return p.maxWorkers
 }
@@ -166,7 +166,7 @@ func (p *WorkerPool) Strategy() ResizingStrategy {
 	return p.strategy
 }
 
-// SubmittedTasks returns the number of tasks submitted since the pool was created
+// SubmittedTasks returns the total number of tasks submitted since the pool was created
 func (p *WorkerPool) SubmittedTasks() uint64 {
 	return atomic.LoadUint64(&p.submittedTaskCount)
 }
@@ -176,18 +176,18 @@ func (p *WorkerPool) WaitingTasks() uint64 {
 	return atomic.LoadUint64(&p.waitingTaskCount)
 }
 
-// SuccessfulTasks returns the number of tasks that have successfully completed their exection
+// SuccessfulTasks returns the total number of tasks that have successfully completed their exection
 // since the pool was created
 func (p *WorkerPool) SuccessfulTasks() uint64 {
 	return atomic.LoadUint64(&p.successfulTaskCount)
 }
 
-// FailedTasks returns the number of tasks that completed with panic since the pool was created
+// FailedTasks returns the total number of tasks that completed with panic since the pool was created
 func (p *WorkerPool) FailedTasks() uint64 {
 	return atomic.LoadUint64(&p.failedTaskCount)
 }
 
-// CompletedTasks returns the number of tasks that have completed their exection either successfully
+// CompletedTasks returns the total number of tasks that have completed their exection either successfully
 // or with panic since the pool was created
 func (p *WorkerPool) CompletedTasks() uint64 {
 	return p.SuccessfulTasks() + p.FailedTasks()

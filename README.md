@@ -32,6 +32,7 @@ Some common scenarios include:
 - Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
 - Very high performance and efficient resource usage under heavy workloads, even outperforming unbounded goroutines in some scenarios (See [benchmarks](./benchmark/README.md))
 - **New (since v1.3.0)**: configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
+- **New (since v1.5.0)**: complete pool metrics such as number of running workers, tasks waiting in the queue [and more](#metrics--monitoring).
 - [API reference](https://pkg.go.dev/github.com/alitto/pond)
 
 ## How to install
@@ -175,6 +176,23 @@ The following chart illustrates the behaviour of the different pool resizing str
 ![Pool resizing strategies behaviour](./docs/strategies.svg)
 
 As the name suggests, the "Eager" strategy always spawns an extra worker when there are no idles, which causes the pool to grow almost linearly with the number of submitted tasks. On the other end, the "Lazy" strategy creates one worker every N submitted tasks, where N is the maximum number of available CPUs ([GOMAXPROCS](https://golang.org/pkg/runtime/#GOMAXPROCS)). The "Balanced" strategy represents a middle ground between the previous two because it creates a worker every N/2 submitted tasks.
+
+### Metrics & monitoring
+
+Each worker pool instance exposes useful metrics that can be queried through the following methods:
+
+- `pool.RunningWorkers() int`: Current number of running workers
+- `pool.IdleWorkers() int`: Current number of idle workers
+- `pool.MinWorkers() int`: Minimum number of worker goroutines
+- `pool.MaxWorkers() int`: Maxmimum number of worker goroutines
+- `pool.MaxCapacity() int`: Maximum number of tasks that can be waiting in the queue at any given time (queue capacity)
+- `pool.SubmittedTasks() uint64`: Total number of tasks submitted since the pool was created
+- `pool.WaitingTasks() uint64`: Current number of tasks in the queue that are waiting to be executed
+- `pool.SuccessfulTasks() uint64`: Total number of tasks that have successfully completed their exection since the pool was created
+- `pool.FailedTasks() uint64`: Total number of tasks that completed with panic since the pool was created
+- `pool.CompletedTasks() uint64`: Total number of tasks that have completed their exection either successfully or with panic since the pool was created
+
+In our [Prometheus example](./examples/prometheus/prometheus.go) we showcase how to configure collectors for these metrics and expose them to Prometheus.
 
 ## API Reference
 
