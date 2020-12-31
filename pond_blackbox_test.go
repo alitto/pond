@@ -16,6 +16,13 @@ func assertEqual(t *testing.T, expected interface{}, actual interface{}) {
 	}
 }
 
+func assertNotEqual(t *testing.T, expected interface{}, actual interface{}) {
+	if expected == actual {
+		t.Helper()
+		t.Errorf("Expected not equal to %T(%v) but was %T(%v)", expected, expected, actual, actual)
+	}
+}
+
 func TestSubmitAndStopWaiting(t *testing.T) {
 
 	pool := pond.New(1, 5)
@@ -97,7 +104,7 @@ func TestSubmitWithNilTask(t *testing.T) {
 	// Wait until all submitted tasks complete
 	pool.StopAndWait()
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 }
 
 func TestSubmitAndWait(t *testing.T) {
@@ -125,7 +132,7 @@ func TestSubmitAndWaitWithNilTask(t *testing.T) {
 	// Wait until all submitted tasks complete
 	pool.StopAndWait()
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 }
 
 func TestSubmitBefore(t *testing.T) {
@@ -161,12 +168,12 @@ func TestSubmitBeforeWithNilTask(t *testing.T) {
 	// Wait until all submitted tasks complete
 	pool.StopAndWait()
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 }
 
 func TestTrySubmit(t *testing.T) {
 
-	pool := pond.New(1, 5)
+	pool := pond.New(1, 0)
 
 	// Submit a long-running task
 	var doneCount int32
@@ -199,8 +206,8 @@ func TestSubmitToIdle(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 	})
 
-	assertEqual(t, int(1), pool.Running())
-	assertEqual(t, int(1), pool.Idle())
+	assertEqual(t, int(1), pool.RunningWorkers())
+	assertEqual(t, int(1), pool.IdleWorkers())
 
 	// Submit another task (this one should go to the idle worker)
 	pool.SubmitAndWait(func() {
@@ -209,8 +216,8 @@ func TestSubmitToIdle(t *testing.T) {
 
 	pool.StopAndWait()
 
-	assertEqual(t, int(0), pool.Running())
-	assertEqual(t, int(0), pool.Idle())
+	assertEqual(t, int(0), pool.RunningWorkers())
+	assertEqual(t, int(0), pool.IdleWorkers())
 }
 
 func TestRunning(t *testing.T) {
@@ -219,7 +226,7 @@ func TestRunning(t *testing.T) {
 	taskCount := 10
 	pool := pond.New(workerCount, taskCount)
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 
 	// Submit tasks
 	var started = make(chan struct{}, workerCount)
@@ -237,7 +244,7 @@ func TestRunning(t *testing.T) {
 		<-started
 	}
 
-	assertEqual(t, workerCount, pool.Running())
+	assertEqual(t, workerCount, pool.RunningWorkers())
 	time.Sleep(1 * time.Millisecond)
 
 	// Make sure half the tasks tasks complete
@@ -257,13 +264,13 @@ func TestRunning(t *testing.T) {
 
 	pool.StopAndWait()
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 }
 
 func TestSubmitWithPanic(t *testing.T) {
 
 	pool := pond.New(1, 5)
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 
 	// Submit a task that panics
 	var doneCount int32
@@ -281,7 +288,7 @@ func TestSubmitWithPanic(t *testing.T) {
 
 	pool.StopAndWait()
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
 }
 
@@ -302,7 +309,7 @@ func TestPoolWithCustomIdleTimeout(t *testing.T) {
 	started <- true
 
 	// There should be 1 worker running
-	assertEqual(t, 1, pool.Running())
+	assertEqual(t, 1, pool.RunningWorkers())
 
 	// Let the task complete
 	completed <- true
@@ -311,7 +318,7 @@ func TestPoolWithCustomIdleTimeout(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Worker should have been killed
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 
 	pool.StopAndWait()
 }
@@ -351,19 +358,19 @@ func TestPoolWithCustomMinWorkers(t *testing.T) {
 	started <- struct{}{}
 
 	// 10 workers should have been started
-	assertEqual(t, 10, pool.Running())
+	assertEqual(t, 10, pool.RunningWorkers())
 
 	<-completed
 
 	pool.StopAndWait()
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 }
 
 func TestGroupSubmit(t *testing.T) {
 
 	pool := pond.New(5, 1000)
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
 
 	// Submit groups of tasks
 	var doneCount, taskCount int32
@@ -404,9 +411,49 @@ func TestPoolWithCustomStrategy(t *testing.T) {
 	group.Wait()
 
 	// 2 workers should have been started
-	assertEqual(t, 2, pool.Running())
+	assertEqual(t, 2, pool.RunningWorkers())
 
 	pool.StopAndWait()
 
-	assertEqual(t, 0, pool.Running())
+	assertEqual(t, 0, pool.RunningWorkers())
+}
+
+func TestMetricsAndGetters(t *testing.T) {
+
+	pool := pond.New(5, 10)
+	assertEqual(t, 0, pool.RunningWorkers())
+
+	// Submit successful tasks
+	for i := 0; i < 18; i++ {
+		pool.TrySubmit(func() {
+			time.Sleep(5 * time.Millisecond)
+		})
+	}
+
+	// Submit a task that panics
+	pool.Submit(func() {
+		arr := make([]string, 0)
+		fmt.Printf("Out of range value: %s", arr[1])
+	})
+
+	// Submit another successful task
+	pool.Submit(func() {
+		time.Sleep(1 * time.Millisecond)
+	})
+
+	// Submit a nil task (it should not update counters)
+	pool.Submit(nil)
+
+	pool.StopAndWait()
+
+	assertEqual(t, 0, pool.RunningWorkers())
+	assertEqual(t, 0, pool.MinWorkers())
+	assertEqual(t, 5, pool.MaxWorkers())
+	assertEqual(t, 10, pool.MaxCapacity())
+	assertNotEqual(t, nil, pool.Strategy())
+	assertEqual(t, uint64(17), pool.SubmittedTasks())
+	assertEqual(t, uint64(16), pool.SuccessfulTasks())
+	assertEqual(t, uint64(1), pool.FailedTasks())
+	assertEqual(t, uint64(17), pool.CompletedTasks())
+	assertEqual(t, uint64(0), pool.WaitingTasks())
 }
