@@ -1,9 +1,9 @@
 module github.com/alitto/pond/examples/task_group
 
-go 1.14
+go 1.15
 
 require (
-	github.com/alitto/pond v1.3.0
+	github.com/alitto/pond v1.5.0
 )
 
 replace github.com/alitto/pond => ../../
