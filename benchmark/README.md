@@ -3,7 +3,7 @@
 We ran a few [benchmarks](./benchmark_test.go) to see how _pond_'s performance compares against some of the most popular worker pool libraries available for Go ([ants](https://github.com/panjf2000/ants/) and [gammazero's workerpool](https://github.com/gammazero/workerpool)), as well as just launching unbounded goroutines or manually creating a goroutine worker pool (inspired by [gobyexample.com](https://gobyexample.com/worker-pools)), using either a buffered or an unbuffered channel to dispatch tasks. 
 
 The test consists of simulating 5 different workload scenarios:
-- *1u-10Mt*: 1 user (goroutine) submitting 1 million tasks
+- *1u-1Mt*: 1 user (goroutine) submitting 1 million tasks
 - *100u-10Kt*: 100 users submitting 10 thousand tasks each
 - *1Ku-1Kt*: 1000 users submitting 1000 tasks each (with a 10ms interval between tasks)
 - *10Ku-100t*: 10 thousand users submitting 100 tasks each (with a 10ms interval interval between tasks)
@@ -20,14 +20,14 @@ go test -benchmem -run=^$ github.com/alitto/pond/benchmark -bench '^(BenchmarkAl
 goos: linux
 goarch: amd64
 pkg: github.com/alitto/pond/benchmark
-BenchmarkAllSleep10ms/1u-10Mt/Pond-Eager-8         	       3	 658233743 ns/op	13177872 B/op	   83966 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Pond-Balanced-8      	       3	 542151290 ns/op	12843525 B/op	   80628 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Pond-Lazy-8          	       3	 453957719 ns/op	13619120 B/op	   88093 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Goroutines-8         	       3	 452322853 ns/op	81737360 B/op	 1009514 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/GoroutinePool-8      	       3	 942987920 ns/op	22749680 B/op	  270289 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/BufferedPool-8       	       3	 971651135 ns/op	31039664 B/op	  273297 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Gammazero-8          	       3	1165440763 ns/op	 2003037 B/op	   24369 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/AntsPool-8           	       3	 640480375 ns/op	 6467578 B/op	   85681 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Pond-Eager-8         	       3	 658233743 ns/op	13177872 B/op	   83966 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Pond-Balanced-8      	       3	 542151290 ns/op	12843525 B/op	   80628 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Pond-Lazy-8          	       3	 453957719 ns/op	13619120 B/op	   88093 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Goroutines-8         	       3	 452322853 ns/op	81737360 B/op	 1009514 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/GoroutinePool-8      	       3	 942987920 ns/op	22749680 B/op	  270289 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/BufferedPool-8       	       3	 971651135 ns/op	31039664 B/op	  273297 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Gammazero-8          	       3	1165440763 ns/op	 2003037 B/op	   24369 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/AntsPool-8           	       3	 640480375 ns/op	 6467578 B/op	   85681 allocs/op
 BenchmarkAllSleep10ms/100u-10Kt/Pond-Eager-8       	       3	 674275336 ns/op	34262096 B/op	  420257 allocs/op
 BenchmarkAllSleep10ms/100u-10Kt/Pond-Balanced-8    	       3	 668055373 ns/op	26164368 B/op	  325129 allocs/op
 BenchmarkAllSleep10ms/100u-10Kt/Pond-Lazy-8        	       3	 570578768 ns/op	19205968 B/op	  200380 allocs/op
@@ -73,14 +73,14 @@ go test -benchmem -run=^$ github.com/alitto/pond/benchmark -bench '^(BenchmarkAl
 goos: linux
 goarch: amd64
 pkg: github.com/alitto/pond/benchmark
-BenchmarkAllRandFloat64/1u-10Mt/Pond-Eager-8         	       3	 221147440 ns/op	 8024589 B/op	     156 allocs/op
-BenchmarkAllRandFloat64/1u-10Mt/Pond-Balanced-8      	       3	 206112267 ns/op	 8014616 B/op	      96 allocs/op
-BenchmarkAllRandFloat64/1u-10Mt/Pond-Lazy-8          	       3	 228397720 ns/op	 8014010 B/op	     120 allocs/op
-BenchmarkAllRandFloat64/1u-10Mt/Goroutines-8         	       3	 255098957 ns/op	  173648 B/op	     602 allocs/op
-BenchmarkAllRandFloat64/1u-10Mt/GoroutinePool-8      	       3	 608808567 ns/op	 6381850 B/op	   66476 allocs/op
-BenchmarkAllRandFloat64/1u-10Mt/BufferedPool-8       	       3	 646646774 ns/op	14388720 B/op	   66516 allocs/op
-BenchmarkAllRandFloat64/1u-10Mt/Gammazero-8          	       3	 556528977 ns/op	     765 B/op	      14 allocs/op
-BenchmarkAllRandFloat64/1u-10Mt/AntsPool-8           	       3	 511636669 ns/op	 1884922 B/op	   25377 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/Pond-Eager-8         	       3	 221147440 ns/op	 8024589 B/op	     156 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/Pond-Balanced-8      	       3	 206112267 ns/op	 8014616 B/op	      96 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/Pond-Lazy-8          	       3	 228397720 ns/op	 8014010 B/op	     120 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/Goroutines-8         	       3	 255098957 ns/op	  173648 B/op	     602 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/GoroutinePool-8      	       3	 608808567 ns/op	 6381850 B/op	   66476 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/BufferedPool-8       	       3	 646646774 ns/op	14388720 B/op	   66516 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/Gammazero-8          	       3	 556528977 ns/op	     765 B/op	      14 allocs/op
+BenchmarkAllRandFloat64/1u-1Mt/AntsPool-8           	       3	 511636669 ns/op	 1884922 B/op	   25377 allocs/op
 BenchmarkAllRandFloat64/100u-10Kt/Pond-Eager-8       	       3	 240239174 ns/op	 8056522 B/op	    1514 allocs/op
 BenchmarkAllRandFloat64/100u-10Kt/Pond-Balanced-8    	       3	 244726370 ns/op	 8009328 B/op	     293 allocs/op
 BenchmarkAllRandFloat64/100u-10Kt/Pond-Lazy-8        	       3	 302086894 ns/op	 8322613 B/op	    5889 allocs/op
@@ -130,14 +130,14 @@ go test -benchmem -run=^$ github.com/alitto/pond/benchmark -bench '^(BenchmarkAl
 goos: linux
 goarch: amd64
 pkg: github.com/alitto/pond/benchmark
-BenchmarkAllSleep10ms/1u-10Mt/Pond-Eager-4         	       3	 638667560 ns/op	15940784 B/op	  121808 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Pond-Balanced-4      	       3	 509435739 ns/op	14681840 B/op	  104546 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Pond-Lazy-4          	       3	 487545047 ns/op	12332784 B/op	   72090 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Goroutines-4         	       3	 622864989 ns/op	81063184 B/op	 1005595 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/GoroutinePool-4      	       3	 993853972 ns/op	23036848 B/op	  273264 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/BufferedPool-4       	       3	1021714262 ns/op	30799696 B/op	  270772 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/Gammazero-4          	       3	1130426539 ns/op	 2032146 B/op	   24702 allocs/op
-BenchmarkAllSleep10ms/1u-10Mt/AntsPool-4           	       3	 665803493 ns/op	 5754085 B/op	   76788 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Pond-Eager-4         	       3	 638667560 ns/op	15940784 B/op	  121808 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Pond-Balanced-4      	       3	 509435739 ns/op	14681840 B/op	  104546 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Pond-Lazy-4          	       3	 487545047 ns/op	12332784 B/op	   72090 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Goroutines-4         	       3	 622864989 ns/op	81063184 B/op	 1005595 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/GoroutinePool-4      	       3	 993853972 ns/op	23036848 B/op	  273264 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/BufferedPool-4       	       3	1021714262 ns/op	30799696 B/op	  270772 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/Gammazero-4          	       3	1130426539 ns/op	 2032146 B/op	   24702 allocs/op
+BenchmarkAllSleep10ms/1u-1Mt/AntsPool-4           	       3	 665803493 ns/op	 5754085 B/op	   76788 allocs/op
 BenchmarkAllSleep10ms/100u-10Kt/Pond-Eager-4       	       3	 818847588 ns/op	35801530 B/op	  414175 allocs/op
 BenchmarkAllSleep10ms/100u-10Kt/Pond-Balanced-4    	       3	 723634296 ns/op	33384848 B/op	  419312 allocs/op
 BenchmarkAllSleep10ms/100u-10Kt/Pond-Lazy-4        	       3	 626540143 ns/op	21113296 B/op	  233346 allocs/op
