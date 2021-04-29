@@ -32,7 +32,7 @@ type workload struct {
 var maxWorkers = 200000
 
 var workloads = []workload{{
-	name:         "1u-10Mt",
+	name:         "1u-1Mt",
 	userCount:    1,
 	taskCount:    1000000,
 	taskInterval: 0,
