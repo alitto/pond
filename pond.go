@@ -211,13 +211,15 @@ func (p *WorkerPool) submit(task func(), canWaitForIdleWorker bool) (submitted b
 		return false
 	}
 
-	defer func() {
-		if submitted {
-			// Increment submitted task count
-			atomic.AddUint64(&p.submittedTaskCount, 1)
+	// Increment submitted and waiting task counters as soon as we receive a task
+	atomic.AddUint64(&p.submittedTaskCount, 1)
+	atomic.AddUint64(&p.waitingTaskCount, 1)
 
-			// Increment waiting task count
-			atomic.AddUint64(&p.waitingTaskCount, 1)
+	defer func() {
+		if !submitted {
+			// Task was not sumitted to the pool, decrement submitted and waiting task counters
+			atomic.AddUint64(&p.submittedTaskCount, ^uint64(0))
+			atomic.AddUint64(&p.waitingTaskCount, ^uint64(0))
 		}
 	}()
 
