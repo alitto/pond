@@ -206,6 +206,8 @@ func TestSubmitToIdle(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 	})
 
+	time.Sleep(10 * time.Millisecond)
+
 	assertEqual(t, int(1), pool.RunningWorkers())
 	assertEqual(t, int(1), pool.IdleWorkers())
 
@@ -215,6 +217,8 @@ func TestSubmitToIdle(t *testing.T) {
 	})
 
 	pool.StopAndWait()
+
+	time.Sleep(10 * time.Millisecond)
 
 	assertEqual(t, int(0), pool.RunningWorkers())
 	assertEqual(t, int(0), pool.IdleWorkers())
@@ -315,7 +319,7 @@ func TestPoolWithCustomIdleTimeout(t *testing.T) {
 	completed <- true
 
 	// Wait for some time
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Worker should have been killed
 	assertEqual(t, 0, pool.RunningWorkers())
