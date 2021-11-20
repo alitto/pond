@@ -141,16 +141,16 @@ func TestSubmitBefore(t *testing.T) {
 
 	// Submit a long-running task
 	var doneCount int32
-	pool.SubmitBefore(func() {
-		time.Sleep(5 * time.Millisecond)
+	pool.Submit(func() {
+		time.Sleep(50 * time.Millisecond)
 		atomic.AddInt32(&doneCount, 1)
-	}, 1*time.Millisecond)
+	})
 
 	// Submit a task that times out after 2ms
 	pool.SubmitBefore(func() {
 		time.Sleep(5 * time.Millisecond)
 		atomic.AddInt32(&doneCount, 1)
-	}, 2*time.Millisecond)
+	}, 5*time.Millisecond)
 
 	pool.StopAndWait()
 
