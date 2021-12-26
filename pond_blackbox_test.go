@@ -255,8 +255,8 @@ func TestSubmitOnStoppedPool(t *testing.T) {
 		pool.Submit(func() {})
 	}()
 
-	// Call to Submit should have failed with SubmitOnStoppedPoolError error
-	assertEqual(t, pond.SubmitOnStoppedPoolError, err)
+	// Call to Submit should have failed with ErrSubmitOnStoppedPool error
+	assertEqual(t, pond.ErrSubmitOnStoppedPool, err)
 }
 
 func TestRunning(t *testing.T) {

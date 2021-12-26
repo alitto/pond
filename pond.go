@@ -16,8 +16,8 @@ const (
 )
 
 var (
-	// SubmitOnStoppedPoolError is thrown when attempting to submit a task to a pool that has been stopped
-	SubmitOnStoppedPoolError = errors.New("worker pool has been stopped and is no longer accepting tasks")
+	// ErrSubmitOnStoppedPool is thrown when attempting to submit a task to a pool that has been stopped
+	ErrSubmitOnStoppedPool = errors.New("worker pool has been stopped and is no longer accepting tasks")
 )
 
 // defaultPanicHandler is the default panic handler
@@ -226,7 +226,7 @@ func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 	if p.Stopped() {
 		// Pool is stopped and caller must submit the task
 		if mustSubmit {
-			panic(SubmitOnStoppedPoolError)
+			panic(ErrSubmitOnStoppedPool)
 		}
 		return false
 	}
