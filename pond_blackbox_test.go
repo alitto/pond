@@ -197,6 +197,20 @@ func TestTrySubmit(t *testing.T) {
 	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
 }
 
+func TestTrySubmitOnStoppedPool(t *testing.T) {
+
+	// Create a pool and stop it immediately
+	pool := pond.New(1, 0)
+	assertEqual(t, false, pool.Stopped())
+	pool.StopAndWait()
+	assertEqual(t, true, pool.Stopped())
+
+	submitted := pool.TrySubmit(func() {})
+
+	// Task should not be accepted by the pool
+	assertEqual(t, false, submitted)
+}
+
 func TestSubmitToIdle(t *testing.T) {
 
 	pool := pond.New(1, 5)
@@ -222,6 +236,27 @@ func TestSubmitToIdle(t *testing.T) {
 
 	assertEqual(t, int(0), pool.RunningWorkers())
 	assertEqual(t, int(0), pool.IdleWorkers())
+}
+
+func TestSubmitOnStoppedPool(t *testing.T) {
+
+	// Create a pool and stop it immediately
+	pool := pond.New(1, 0)
+	assertEqual(t, false, pool.Stopped())
+	pool.StopAndWait()
+	assertEqual(t, true, pool.Stopped())
+
+	// Attempt to submit a task on a stopped pool
+	var err interface{} = nil
+	func() {
+		defer func() {
+			err = recover()
+		}()
+		pool.Submit(func() {})
+	}()
+
+	// Call to Submit should have failed with ErrSubmitOnStoppedPool error
+	assertEqual(t, pond.ErrSubmitOnStoppedPool, err)
 }
 
 func TestRunning(t *testing.T) {

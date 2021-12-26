@@ -1,6 +1,7 @@
 package pond
 
 import (
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -12,6 +13,11 @@ const (
 	// defaultIdleTimeout defines the default idle timeout to use when not explicitly specified
 	// via the IdleTimeout() option
 	defaultIdleTimeout = 5 * time.Second
+)
+
+var (
+	// ErrSubmitOnStoppedPool is thrown when attempting to submit a task to a pool that has been stopped
+	ErrSubmitOnStoppedPool = errors.New("worker pool has been stopped and is no longer accepting tasks")
 )
 
 // defaultPanicHandler is the default panic handler
@@ -77,6 +83,7 @@ type WorkerPool struct {
 	stopOnce   sync.Once
 	waitGroup  sync.WaitGroup
 	mutex      sync.Mutex
+	stopped    bool
 }
 
 // New creates a worker pool with that can scale up to the given maximum number of workers (maxWorkers).
@@ -193,6 +200,11 @@ func (p *WorkerPool) CompletedTasks() uint64 {
 	return p.SuccessfulTasks() + p.FailedTasks()
 }
 
+// Stopped returns true if the pool has been stopped and is no longer accepting tasks, and false otherwise.
+func (p *WorkerPool) Stopped() bool {
+	return p.stopped
+}
+
 // Submit sends a task to this worker pool for execution. If the queue is full,
 // it will wait until the task is dispatched to a worker goroutine.
 func (p *WorkerPool) Submit(task func()) {
@@ -206,8 +218,16 @@ func (p *WorkerPool) TrySubmit(task func()) bool {
 	return p.submit(task, false)
 }
 
-func (p *WorkerPool) submit(task func(), canWaitForIdleWorker bool) (submitted bool) {
+func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 	if task == nil {
+		return false
+	}
+
+	if p.Stopped() {
+		// Pool is stopped and caller must submit the task
+		if mustSubmit {
+			panic(ErrSubmitOnStoppedPool)
+		}
 		return false
 	}
 
@@ -244,7 +264,7 @@ func (p *WorkerPool) submit(task func(), canWaitForIdleWorker bool) (submitted b
 		}
 	}
 
-	if !canWaitForIdleWorker {
+	if !mustSubmit {
 		select {
 		case p.tasks <- task:
 			submitted = true
@@ -301,6 +321,9 @@ func (p *WorkerPool) SubmitBefore(task func(), deadline time.Duration) {
 // Stop causes this pool to stop accepting tasks, without waiting for goroutines to exit
 func (p *WorkerPool) Stop() {
 	p.stopOnce.Do(func() {
+		// Mark pool as stopped
+		p.stopped = true
+
 		// Send the signal to stop the purger goroutine
 		close(p.purgerQuit)
 	})
@@ -412,7 +435,7 @@ func (p *WorkerPool) Group() *TaskGroup {
 }
 
 // worker launches a worker goroutine
-func worker(firstTask func(), tasks chan func(), idleWorkerCount *int32, exitHandler func(), taskExecutor func(func())) {
+func worker(firstTask func(), tasks <-chan func(), idleWorkerCount *int32, exitHandler func(), taskExecutor func(func())) {
 
 	defer func() {
 		// Decrement idle count
