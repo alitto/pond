@@ -1,4 +1,4 @@
-<a title="Build Status" target="_blank" href="https://travis-ci.com/alitto/pond"><img src="https://travis-ci.com/alitto/pond.svg?branch=master&status=passed"></a>
+<img alt="Build status" src="https://github.com/alitto/pond/actions/workflows/main.yml/badge.svg?branch=master&event=push">
 <a title="Codecov" target="_blank" href="https://codecov.io/gh/alitto/pond"><img src="https://codecov.io/gh/alitto/pond/branch/master/graph/badge.svg"></a>
 <a title="Release" target="_blank" href="https://github.com/alitto/pond/releases"><img src="https://img.shields.io/github/v/release/alitto/pond"></a>
 <a title="Go Report Card" target="_blank" href="https://goreportcard.com/report/github.com/alitto/pond"><img src="https://goreportcard.com/badge/github.com/alitto/pond"></a>
@@ -31,8 +31,9 @@ Some common scenarios include:
 - Task panics are handled gracefully (configurable panic handler)
 - Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
 - Very high performance and efficient resource usage under heavy workloads, even outperforming unbounded goroutines in some scenarios (See [benchmarks](./benchmark/README.md))
-- **New (since v1.3.0)**: configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
-- **New (since v1.5.0)**: complete pool metrics such as number of running workers, tasks waiting in the queue [and more](#metrics--monitoring).
+- Configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
+- Complete pool metrics such as number of running workers, tasks waiting in the queue [and more](#metrics--monitoring).
+- **New (since v1.7.0)**: configurable parent context and graceful shutdown with deadline.
 - [API reference](https://pkg.go.dev/github.com/alitto/pond)
 
 ## How to install
@@ -167,6 +168,11 @@ pool := pond.New(10, 1000, pond.PanicHandler(panicHandler)))
 eagerPool := pond.New(10, 1000, pond.Strategy(pond.Eager()))
 balancedPool := pond.New(10, 1000, pond.Strategy(pond.Balanced()))
 lazyPool := pond.New(10, 1000, pond.Strategy(pond.Lazy()))
+```
+- **Context**: Configures a parent context on this pool to stop all workers when it is cancelled. The default value `context.Background()`. Example:
+``` go
+// This creates a pool that is stopped when myCtx is cancelled 
+pool := pond.New(10, 1000, pond.Context(myCtx))
 ``` 
 
 ### Resizing strategies
@@ -176,6 +182,13 @@ The following chart illustrates the behaviour of the different pool resizing str
 ![Pool resizing strategies behaviour](./docs/strategies.svg)
 
 As the name suggests, the "Eager" strategy always spawns an extra worker when there are no idles, which causes the pool to grow almost linearly with the number of submitted tasks. On the other end, the "Lazy" strategy creates one worker every N submitted tasks, where N is the maximum number of available CPUs ([GOMAXPROCS](https://golang.org/pkg/runtime/#GOMAXPROCS)). The "Balanced" strategy represents a middle ground between the previous two because it creates a worker every N/2 submitted tasks.
+
+### Stopping a pool
+
+There are 3 methods available to stop a pool and release associated resources:
+- `pool.Stop()`: stop accepting new tasks and signal all workers to stop processing new tasks. Tasks being processed by workers will continue until completion unless the process is terminated.
+- `pool.StopAndWait()`: stop accepting new tasks and wait until all running and queued tasks have completed before returning.
+- `pool.StopAndWaitFor(deadline time.Duration)`: similar to `StopAndWait` but with a deadline to prevent waiting indefinitely.
 
 ### Metrics & monitoring
 
@@ -193,6 +206,14 @@ Each worker pool instance exposes useful metrics that can be queried through the
 - `pool.CompletedTasks() uint64`: Total number of tasks that have completed their exection either successfully or with panic since the pool was created
 
 In our [Prometheus example](./examples/prometheus/prometheus.go) we showcase how to configure collectors for these metrics and expose them to Prometheus.
+
+## Examples
+
+- [Creating a worker pool with dynamic size](./examples/dynamic_size/dynamic_size.go)
+- [Creating a worker pool with fixed size](./examples/fixed_size/fixed_size.go)
+- [Creating a worker pool with a Context](./examples/pool_context/pool_context.go)
+- [Exporting worker pool metrics to Prometheus](./examples/prometheus/prometheus.go)
+- [Submitting groups of related tasks](./examples/task_group/task_group.go)
 
 ## API Reference
 

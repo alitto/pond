@@ -3,7 +3,7 @@ module github.com/alitto/pond/benchmark
 go 1.17
 
 require (
-	github.com/alitto/pond v1.3.0
+	github.com/alitto/pond v1.6.1
 	github.com/gammazero/workerpool v1.1.2
 	github.com/panjf2000/ants/v2 v2.4.7
 )
