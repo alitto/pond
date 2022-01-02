@@ -1,6 +1,7 @@
 package pond_test
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -23,7 +24,7 @@ func assertNotEqual(t *testing.T, expected interface{}, actual interface{}) {
 	}
 }
 
-func TestSubmitAndStopWaiting(t *testing.T) {
+func TestSubmitAndStopWait(t *testing.T) {
 
 	pool := pond.New(1, 5)
 
@@ -40,6 +41,44 @@ func TestSubmitAndStopWaiting(t *testing.T) {
 	pool.StopAndWait()
 
 	assertEqual(t, int32(17), atomic.LoadInt32(&doneCount))
+}
+
+func TestSubmitAndStopWaitFor(t *testing.T) {
+
+	pool := pond.New(1, 10)
+
+	// Submit tasks
+	var doneCount int32
+	for i := 0; i < 10; i++ {
+		pool.Submit(func() {
+			time.Sleep(50 * time.Millisecond)
+			atomic.AddInt32(&doneCount, 1)
+		})
+	}
+
+	// Wait until all submitted tasks complete
+	pool.StopAndWaitFor(125 * time.Millisecond)
+
+	assertEqual(t, int32(2), atomic.LoadInt32(&doneCount))
+}
+
+func TestSubmitAndStopWaitForWithEnoughDeadline(t *testing.T) {
+
+	pool := pond.New(1, 10)
+
+	// Submit tasks
+	var doneCount int32
+	for i := 0; i < 10; i++ {
+		pool.Submit(func() {
+			time.Sleep(5 * time.Millisecond)
+			atomic.AddInt32(&doneCount, 1)
+		})
+	}
+
+	// Wait until all submitted tasks complete
+	pool.StopAndWaitFor(1 * time.Second)
+
+	assertEqual(t, int32(10), atomic.LoadInt32(&doneCount))
 }
 
 func TestSubmitAndStopWaitingWithMoreWorkersThanTasks(t *testing.T) {
@@ -146,16 +185,22 @@ func TestSubmitBefore(t *testing.T) {
 		atomic.AddInt32(&doneCount, 1)
 	})
 
-	// Submit a task that times out after 2ms
+	// Submit a task that times out after 5ms
 	pool.SubmitBefore(func() {
 		time.Sleep(5 * time.Millisecond)
 		atomic.AddInt32(&doneCount, 1)
 	}, 5*time.Millisecond)
 
+	// Submit a task that times out after 1s
+	pool.SubmitBefore(func() {
+		time.Sleep(5 * time.Millisecond)
+		atomic.AddInt32(&doneCount, 1)
+	}, 1*time.Second)
+
 	pool.StopAndWait()
 
-	// Only the first task must have executed
-	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
+	// Only 2 tasks must have executed
+	assertEqual(t, int32(2), atomic.LoadInt32(&doneCount))
 }
 
 func TestSubmitBeforeWithNilTask(t *testing.T) {
@@ -495,4 +540,33 @@ func TestMetricsAndGetters(t *testing.T) {
 	assertEqual(t, uint64(1), pool.FailedTasks())
 	assertEqual(t, uint64(17), pool.CompletedTasks())
 	assertEqual(t, uint64(0), pool.WaitingTasks())
+}
+
+func TestSubmitWithContext(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pool := pond.New(1, 5, pond.Context(ctx))
+
+	var doneCount, taskCount int32
+
+	// Submit a long-running, cancellable task
+	pool.Submit(func() {
+		atomic.AddInt32(&taskCount, 1)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1 * time.Minute):
+			atomic.AddInt32(&doneCount, 1)
+			return
+		}
+	})
+
+	// Cancel the context
+	cancel()
+
+	pool.StopAndWait()
+
+	assertEqual(t, int32(1), atomic.LoadInt32(&taskCount))
+	assertEqual(t, int32(0), atomic.LoadInt32(&doneCount))
 }
