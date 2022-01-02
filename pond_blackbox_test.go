@@ -47,19 +47,17 @@ func TestSubmitAndStopWaitFor(t *testing.T) {
 
 	pool := pond.New(1, 10)
 
-	// Submit tasks
+	// Submit a long running task
 	var doneCount int32
-	for i := 0; i < 10; i++ {
-		pool.Submit(func() {
-			time.Sleep(50 * time.Millisecond)
-			atomic.AddInt32(&doneCount, 1)
-		})
-	}
+	pool.Submit(func() {
+		time.Sleep(2 * time.Second)
+		atomic.AddInt32(&doneCount, 1)
+	})
 
-	// Wait until all submitted tasks complete
-	pool.StopAndWaitFor(125 * time.Millisecond)
+	// Wait 100ms for the task to complete
+	pool.StopAndWaitFor(50 * time.Millisecond)
 
-	assertEqual(t, int32(2), atomic.LoadInt32(&doneCount))
+	assertEqual(t, int32(0), atomic.LoadInt32(&doneCount))
 }
 
 func TestSubmitAndStopWaitForWithEnoughDeadline(t *testing.T) {
