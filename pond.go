@@ -334,9 +334,6 @@ func (p *WorkerPool) Stop() {
 		// Mark pool as stopped
 		p.stopped = true
 
-		// Stop accepting new tasks
-		close(p.tasks)
-
 		// Terminate all workers & purger goroutine
 		p.contextCancel()
 	})
@@ -348,9 +345,6 @@ func (p *WorkerPool) StopAndWait() {
 	p.stopOnce.Do(func() {
 		// Mark pool as stopped
 		p.stopped = true
-
-		// Stop accepting new tasks
-		close(p.tasks)
 
 		// Wait for all workers to exit
 		p.waitGroup.Wait()
@@ -386,6 +380,7 @@ func (p *WorkerPool) purge() {
 
 	idleTicker := time.NewTicker(p.idleTimeout)
 	defer idleTicker.Stop()
+	defer close(p.tasks)
 
 	for {
 		select {
@@ -396,6 +391,7 @@ func (p *WorkerPool) purge() {
 			}
 		// Pool context was cancelled, exit
 		case <-p.context.Done():
+
 			return
 		}
 	}
