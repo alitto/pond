@@ -1,6 +1,7 @@
 package pond
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -28,4 +29,20 @@ func TestNewWithInconsistentOptions(t *testing.T) {
 	assertEqual(t, 0, pool.maxCapacity)
 	assertEqual(t, 1, pool.minWorkers)
 	assertEqual(t, defaultIdleTimeout, pool.idleTimeout)
+}
+
+func TestPurgeAfterPoolStopped(t *testing.T) {
+
+	pool := New(1, 1)
+
+	var doneCount int32
+	pool.SubmitAndWait(func() {
+		atomic.AddInt32(&doneCount, 1)
+	})
+	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
+	assertEqual(t, 1, pool.RunningWorkers())
+
+	// Simulate purger goroutine attempting to stop a worker after tasks channel is closed
+	pool.stopped = true
+	pool.stopIdleWorker()
 }
