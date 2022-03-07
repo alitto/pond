@@ -91,6 +91,7 @@ type WorkerPool struct {
 	tasks            chan func()
 	workersWaitGroup sync.WaitGroup
 	tasksWaitGroup   sync.WaitGroup
+	purgerWaitGroup  sync.WaitGroup
 	mutex            sync.Mutex
 	stopped          bool
 }
@@ -138,6 +139,7 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 	pool.tasks = make(chan func(), pool.maxCapacity)
 
 	// Start purger goroutine
+	pool.purgerWaitGroup.Add(1)
 	go pool.purge()
 
 	// Start minWorkers workers
@@ -377,11 +379,14 @@ func (p *WorkerPool) stop(waitForCompletion bool) {
 	// Wait for all workers to exit
 	if waitForCompletion {
 		p.workersWaitGroup.Wait()
+		p.purgerWaitGroup.Wait()
+		close(p.tasks)
 	}
 }
 
 // purge represents the work done by the purger goroutine
 func (p *WorkerPool) purge() {
+	defer p.purgerWaitGroup.Done()
 
 	idleTicker := time.NewTicker(p.idleTimeout)
 	defer idleTicker.Stop()
