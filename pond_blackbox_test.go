@@ -3,6 +3,7 @@ package pond_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -567,4 +568,32 @@ func TestSubmitWithContext(t *testing.T) {
 
 	assertEqual(t, int32(1), atomic.LoadInt32(&taskCount))
 	assertEqual(t, int32(0), atomic.LoadInt32(&doneCount))
+}
+
+func TestConcurrentStopAndWait(t *testing.T) {
+
+	pool := pond.New(1, 5)
+
+	// Submit tasks
+	var doneCount int32
+	for i := 0; i < 10; i++ {
+		pool.Submit(func() {
+			time.Sleep(1 * time.Millisecond)
+			atomic.AddInt32(&doneCount, 1)
+		})
+	}
+
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			pool.StopAndWait()
+			assertEqual(t, int32(10), atomic.LoadInt32(&doneCount))
+		}()
+	}
+
+	wg.Wait()
 }
