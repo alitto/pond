@@ -597,3 +597,27 @@ func TestConcurrentStopAndWait(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestSubmitToIdleWorker(t *testing.T) {
+
+	pool := pond.New(6, 0, pond.MinWorkers(3))
+
+	assertEqual(t, 3, pool.RunningWorkers())
+
+	// Submit task
+	var doneCount int32
+	for i := 0; i < 3; i++ {
+		pool.Submit(func() {
+			time.Sleep(1 * time.Millisecond)
+			atomic.AddInt32(&doneCount, 1)
+		})
+	}
+
+	// Verify no new workers were started
+	assertEqual(t, 3, pool.RunningWorkers())
+
+	// Wait until all submitted tasks complete
+	pool.StopAndWait()
+
+	assertEqual(t, int32(3), atomic.LoadInt32(&doneCount))
+}

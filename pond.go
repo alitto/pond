@@ -231,7 +231,7 @@ func (p *WorkerPool) TrySubmit(task func()) bool {
 
 func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 	if task == nil {
-		return false
+		return
 	}
 
 	if p.Stopped() {
@@ -239,7 +239,7 @@ func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 		if mustSubmit {
 			panic(ErrSubmitOnStoppedPool)
 		}
-		return false
+		return
 	}
 
 	// Increment submitted and waiting task counters as soon as we receive a task
@@ -256,35 +256,19 @@ func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 		}
 	}()
 
-	runningWorkerCount := p.RunningWorkers()
-
-	// Attempt to dispatch to an idle worker without blocking
-	if runningWorkerCount > 0 && p.IdleWorkers() > 0 {
-		select {
-		case p.tasks <- task:
-			submitted = true
-			return
-		default:
-			// No idle worker available, continue
-		}
-	}
-
 	// Start a worker as long as we haven't reached the limit
-	if runningWorkerCount < p.maxWorkers {
-		if ok := p.maybeStartWorker(task); ok {
-			submitted = true
-			return
-		}
+	if submitted = p.maybeStartWorker(task); submitted {
+		return
 	}
 
 	if !mustSubmit {
+		// Attempt to dispatch to an idle worker without blocking
 		select {
 		case p.tasks <- task:
 			submitted = true
 			return
 		default:
 			// Channel is full and can't wait for an idle worker, so need to exit
-			submitted = false
 			return
 		}
 	}
@@ -414,15 +398,20 @@ func (p *WorkerPool) stopIdleWorker() {
 	}
 }
 
-// startWorkers creates new worker goroutines to run the given tasks
+// maybeStartWorker attempts to create a new worker goroutine to run the given task.
+// If the worker pool has reached the maximum number of workers or there are idle workers,
+// it will not create a new worker.
 func (p *WorkerPool) maybeStartWorker(firstTask func()) bool {
 
-	// Attempt to increment worker count
 	if ok := p.incrementWorkerCount(); !ok {
 		return false
 	}
 
-	// Launch worker
+	if firstTask == nil {
+		atomic.AddInt32(&p.idleWorkerCount, 1)
+	}
+
+	// Launch worker goroutine
 	go worker(p.context, firstTask, p.tasks, &p.idleWorkerCount, p.decrementWorkerCount, p.executeTask)
 
 	return true
@@ -451,31 +440,44 @@ func (p *WorkerPool) executeTask(task func()) {
 	atomic.AddUint64(&p.successfulTaskCount, 1)
 }
 
-func (p *WorkerPool) incrementWorkerCount() bool {
+func (p *WorkerPool) incrementWorkerCount() (incremented bool) {
 
-	// Attempt to increment worker count
-	p.mutex.Lock()
 	runningWorkerCount := p.RunningWorkers()
-	// Execute the resizing strategy to determine if we can create more workers
-	if !p.strategy.Resize(runningWorkerCount, p.minWorkers, p.maxWorkers) || runningWorkerCount >= p.maxWorkers {
-		p.mutex.Unlock()
-		return false
+
+	// Reached max workers, do not create a new one
+	if runningWorkerCount >= p.maxWorkers {
+		return
 	}
-	atomic.AddInt32(&p.workerCount, 1)
-	p.mutex.Unlock()
 
-	// Increment waiting group semaphore
-	p.workersWaitGroup.Add(1)
+	// Idle workers available, do not create a new one
+	if runningWorkerCount >= p.minWorkers && runningWorkerCount > 0 && p.IdleWorkers() > 0 {
+		return
+	}
 
-	return true
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	// Execute the resizing strategy to determine if we can create more workers
+	incremented = p.strategy.Resize(runningWorkerCount, p.minWorkers, p.maxWorkers)
+
+	if incremented {
+		// Increment worker count
+		atomic.AddInt32(&p.workerCount, 1)
+
+		// Increment waiting group semaphore
+		p.workersWaitGroup.Add(1)
+	}
+
+	return
 }
 
 func (p *WorkerPool) decrementWorkerCount() {
 
-	// Decrement worker count
 	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	// Decrement worker count
 	atomic.AddInt32(&p.workerCount, -1)
-	p.mutex.Unlock()
 
 	// Decrement waiting group semaphore
 	p.workersWaitGroup.Done()
@@ -502,9 +504,10 @@ func worker(context context.Context, firstTask func(), tasks <-chan func(), idle
 	// We have received a task, execute it
 	if firstTask != nil {
 		taskExecutor(firstTask)
+
+		// Increment idle count
+		atomic.AddInt32(idleWorkerCount, 1)
 	}
-	// Increment idle count
-	atomic.AddInt32(idleWorkerCount, 1)
 
 	for {
 		select {
