@@ -89,11 +89,11 @@ type WorkerPool struct {
 	failedTaskCount     uint64
 	// Private properties
 	tasks            chan func()
+	tasksCloseOnce   sync.Once
 	workersWaitGroup sync.WaitGroup
 	tasksWaitGroup   sync.WaitGroup
-	purgerDoneChan   chan struct{}
 	mutex            sync.Mutex
-	stopped          bool
+	stopped          int32
 }
 
 // New creates a worker pool with that can scale up to the given maximum number of workers (maxWorkers).
@@ -139,7 +139,7 @@ func New(maxWorkers, maxCapacity int, options ...Option) *WorkerPool {
 	pool.tasks = make(chan func(), pool.maxCapacity)
 
 	// Start purger goroutine
-	pool.purgerDoneChan = make(chan struct{})
+	pool.workersWaitGroup.Add(1)
 	go pool.purge()
 
 	// Start minWorkers workers
@@ -212,7 +212,7 @@ func (p *WorkerPool) CompletedTasks() uint64 {
 
 // Stopped returns true if the pool has been stopped and is no longer accepting tasks, and false otherwise.
 func (p *WorkerPool) Stopped() bool {
-	return p.stopped
+	return atomic.LoadInt32(&p.stopped) == 1
 }
 
 // Submit sends a task to this worker pool for execution. If the queue is full,
@@ -230,7 +230,7 @@ func (p *WorkerPool) TrySubmit(task func()) bool {
 
 func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 	if task == nil {
-		return false
+		return
 	}
 
 	if p.Stopped() {
@@ -238,7 +238,7 @@ func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 		if mustSubmit {
 			panic(ErrSubmitOnStoppedPool)
 		}
-		return false
+		return
 	}
 
 	// Increment submitted and waiting task counters as soon as we receive a task
@@ -255,35 +255,19 @@ func (p *WorkerPool) submit(task func(), mustSubmit bool) (submitted bool) {
 		}
 	}()
 
-	runningWorkerCount := p.RunningWorkers()
-
-	// Attempt to dispatch to an idle worker without blocking
-	if runningWorkerCount > 0 && p.IdleWorkers() > 0 {
-		select {
-		case p.tasks <- task:
-			submitted = true
-			return
-		default:
-			// No idle worker available, continue
-		}
-	}
-
 	// Start a worker as long as we haven't reached the limit
-	if runningWorkerCount < p.maxWorkers {
-		if ok := p.maybeStartWorker(task); ok {
-			submitted = true
-			return
-		}
+	if submitted = p.maybeStartWorker(task); submitted {
+		return
 	}
 
 	if !mustSubmit {
+		// Attempt to dispatch to an idle worker without blocking
 		select {
 		case p.tasks <- task:
 			submitted = true
 			return
 		default:
 			// Channel is full and can't wait for an idle worker, so need to exit
-			submitted = false
 			return
 		}
 	}
@@ -330,26 +314,27 @@ func (p *WorkerPool) SubmitBefore(task func(), deadline time.Duration) {
 	})
 }
 
-// Stop causes this pool to stop accepting new tasks and signals all workers to stop processing new tasks.
-// Tasks being processed by workers will continue until completion unless the process is terminated.
+// Stop causes this pool to stop accepting new tasks and signals all workers to exit.
+// Tasks being executed by workers will continue until completion (unless the process is terminated).
+// Tasks in the queue will not be executed.
 func (p *WorkerPool) Stop() {
-	go p.stop()
+	go p.stop(false)
 }
 
 // StopAndWait causes this pool to stop accepting new tasks and then waits for all tasks in the queue
 // to complete before returning.
 func (p *WorkerPool) StopAndWait() {
-	p.stop()
+	p.stop(true)
 }
 
-// StopAndWaitFor stops this pool and waits for all tasks in the queue to complete before returning
-// or until the given deadline is reached, whichever comes first.
+// StopAndWaitFor stops this pool and waits until either all tasks in the queue are completed
+// or the given deadline is reached, whichever comes first.
 func (p *WorkerPool) StopAndWaitFor(deadline time.Duration) {
 
 	// Launch goroutine to detect when worker pool has stopped gracefully
 	workersDone := make(chan struct{})
 	go func() {
-		p.stop()
+		p.stop(true)
 		workersDone <- struct{}{}
 	}()
 
@@ -363,29 +348,30 @@ func (p *WorkerPool) StopAndWaitFor(deadline time.Duration) {
 	}
 }
 
-func (p *WorkerPool) stop() {
+func (p *WorkerPool) stop(waitForQueuedTasksToComplete bool) {
 	// Mark pool as stopped
-	p.stopped = true
+	atomic.StoreInt32(&p.stopped, 1)
 
-	// Wait for all queued tasks to complete
-	p.tasksWaitGroup.Wait()
+	if waitForQueuedTasksToComplete {
+		// Wait for all queued tasks to complete
+		p.tasksWaitGroup.Wait()
+	}
 
 	// Terminate all workers & purger goroutine
 	p.contextCancel()
 
-	// Wait for all workers to exit
+	// Wait for all workers & purger goroutine to exit
 	p.workersWaitGroup.Wait()
 
-	// Wait purger goroutine to exit
-	<-p.purgerDoneChan
-
-	// close tasks channel
-	close(p.tasks)
+	// close tasks channel (only once, in case multiple concurrent calls to StopAndWait are made)
+	p.tasksCloseOnce.Do(func() {
+		close(p.tasks)
+	})
 }
 
 // purge represents the work done by the purger goroutine
 func (p *WorkerPool) purge() {
-	defer func() { p.purgerDoneChan <- struct{}{} }()
+	defer p.workersWaitGroup.Done()
 
 	idleTicker := time.NewTicker(p.idleTimeout)
 	defer idleTicker.Stop()
@@ -409,15 +395,20 @@ func (p *WorkerPool) stopIdleWorker() {
 	}
 }
 
-// startWorkers creates new worker goroutines to run the given tasks
+// maybeStartWorker attempts to create a new worker goroutine to run the given task.
+// If the worker pool has reached the maximum number of workers or there are idle workers,
+// it will not create a new worker.
 func (p *WorkerPool) maybeStartWorker(firstTask func()) bool {
 
-	// Attempt to increment worker count
 	if ok := p.incrementWorkerCount(); !ok {
 		return false
 	}
 
-	// Launch worker
+	if firstTask == nil {
+		atomic.AddInt32(&p.idleWorkerCount, 1)
+	}
+
+	// Launch worker goroutine
 	go worker(p.context, firstTask, p.tasks, &p.idleWorkerCount, p.decrementWorkerCount, p.executeTask)
 
 	return true
@@ -446,33 +437,46 @@ func (p *WorkerPool) executeTask(task func()) {
 	atomic.AddUint64(&p.successfulTaskCount, 1)
 }
 
-func (p *WorkerPool) incrementWorkerCount() bool {
+func (p *WorkerPool) incrementWorkerCount() (incremented bool) {
 
-	// Attempt to increment worker count
-	p.mutex.Lock()
 	runningWorkerCount := p.RunningWorkers()
-	// Execute the resizing strategy to determine if we can create more workers
-	if !p.strategy.Resize(runningWorkerCount, p.minWorkers, p.maxWorkers) || runningWorkerCount >= p.maxWorkers {
-		p.mutex.Unlock()
-		return false
+
+	// Reached max workers, do not create a new one
+	if runningWorkerCount >= p.maxWorkers {
+		return
 	}
-	atomic.AddInt32(&p.workerCount, 1)
-	p.mutex.Unlock()
 
-	// Increment waiting group semaphore
-	p.workersWaitGroup.Add(1)
+	// Idle workers available, do not create a new one
+	if runningWorkerCount >= p.minWorkers && runningWorkerCount > 0 && p.IdleWorkers() > 0 {
+		return
+	}
 
-	return true
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	// Execute the resizing strategy to determine if we can create more workers
+	incremented = p.strategy.Resize(runningWorkerCount, p.minWorkers, p.maxWorkers)
+
+	if incremented {
+		// Increment worker count
+		atomic.AddInt32(&p.workerCount, 1)
+
+		// Increment wait group
+		p.workersWaitGroup.Add(1)
+	}
+
+	return
 }
 
 func (p *WorkerPool) decrementWorkerCount() {
 
-	// Decrement worker count
 	p.mutex.Lock()
-	atomic.AddInt32(&p.workerCount, -1)
-	p.mutex.Unlock()
+	defer p.mutex.Unlock()
 
-	// Decrement waiting group semaphore
+	// Decrement worker count
+	atomic.AddInt32(&p.workerCount, -1)
+
+	// Decrement wait group
 	p.workersWaitGroup.Done()
 }
 
@@ -497,9 +501,10 @@ func worker(context context.Context, firstTask func(), tasks <-chan func(), idle
 	// We have received a task, execute it
 	if firstTask != nil {
 		taskExecutor(firstTask)
+
+		// Increment idle count
+		atomic.AddInt32(idleWorkerCount, 1)
 	}
-	// Increment idle count
-	atomic.AddInt32(idleWorkerCount, 1)
 
 	for {
 		select {

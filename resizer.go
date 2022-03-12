@@ -2,7 +2,6 @@ package pond
 
 import (
 	"runtime"
-	"sync/atomic"
 )
 
 var maxProcs = runtime.GOMAXPROCS(0)
@@ -25,8 +24,8 @@ var (
 
 // ratedResizer implements a rated resizing strategy
 type ratedResizer struct {
-	rate int
-	hits int32
+	rate uint64
+	hits uint64
 }
 
 // RatedResizer creates a resizing strategy which can be configured
@@ -40,7 +39,7 @@ func RatedResizer(rate int) ResizingStrategy {
 	}
 
 	return &ratedResizer{
-		rate: rate,
+		rate: uint64(rate),
 	}
 }
 
@@ -50,7 +49,7 @@ func (r *ratedResizer) Resize(runningWorkers, minWorkers, maxWorkers int) bool {
 		return true
 	}
 
-	hits := int(atomic.AddInt32(&r.hits, 1))
+	r.hits++
 
-	return hits%r.rate == 1
+	return r.hits%r.rate == 1
 }
