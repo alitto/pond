@@ -43,6 +43,6 @@ func TestPurgeAfterPoolStopped(t *testing.T) {
 	assertEqual(t, 1, pool.RunningWorkers())
 
 	// Simulate purger goroutine attempting to stop a worker after tasks channel is closed
-	pool.stopped = true
+	atomic.StoreInt32(&pool.stopped, 1)
 	pool.stopIdleWorker()
 }
