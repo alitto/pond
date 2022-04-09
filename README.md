@@ -30,7 +30,7 @@ Some common scenarios include:
   - Stopping a worker pool
 - Task panics are handled gracefully (configurable panic handler)
 - Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
-- Very high performance and efficient resource usage under heavy workloads, even outperforming unbounded goroutines in some scenarios (See [benchmarks](./benchmark/README.md))
+- Very high performance and efficient resource usage under heavy workloads, even outperforming unbounded goroutines in some scenarios (See [benchmarks](https://github.com/alitto/pond-benchmarks))
 - Configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
 - Complete pool metrics such as number of running workers, tasks waiting in the queue [and more](#metrics--monitoring).
 - **New (since v1.7.0)**: configurable parent context and graceful shutdown with deadline.
@@ -221,7 +221,7 @@ Full API reference is available at https://pkg.go.dev/github.com/alitto/pond
 
 ## Benchmarks
 
-See [Benchmarks](./benchmark/README.md).
+See [Benchmarks](https://github.com/alitto/pond-benchmarks).
 
 ## Resources
 
