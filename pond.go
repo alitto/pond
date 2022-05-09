@@ -492,6 +492,11 @@ func (p *WorkerPool) Group() *TaskGroup {
 // The derived Context is canceled the first time a function submitted to the group
 // returns a non-nil error or the first time Wait returns, whichever occurs first.
 func (p *WorkerPool) GroupContext(ctx context.Context) (*TaskGroupWithContext, context.Context) {
+
+	if ctx == nil {
+		panic("a non-nil context needs to be specified when using GroupContext")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	return &TaskGroupWithContext{
 		TaskGroup: TaskGroup{

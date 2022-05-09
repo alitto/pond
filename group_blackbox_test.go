@@ -105,3 +105,18 @@ func TestGroupContextWithError(t *testing.T) {
 	assertEqual(t, int32(5), atomic.LoadInt32(&startedCount))
 	assertEqual(t, int32(4), atomic.LoadInt32(&doneCount))
 }
+
+func TestGroupContextWithNilContext(t *testing.T) {
+
+	pool := pond.New(3, 100)
+
+	var thrownPanic interface{}
+	func() {
+		defer func() {
+			thrownPanic = recover()
+		}()
+		pool.GroupContext(nil)
+	}()
+
+	assertEqual(t, "a non-nil context needs to be specified when using GroupContext", thrownPanic)
+}
