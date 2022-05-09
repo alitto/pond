@@ -450,34 +450,6 @@ func TestPoolWithCustomMinWorkers(t *testing.T) {
 	assertEqual(t, 0, pool.RunningWorkers())
 }
 
-func TestGroupSubmit(t *testing.T) {
-
-	pool := pond.New(5, 1000)
-	assertEqual(t, 0, pool.RunningWorkers())
-
-	// Submit groups of tasks
-	var doneCount, taskCount int32
-	var groups []*pond.TaskGroup
-	for i := 0; i < 5; i++ {
-		group := pool.Group()
-		for j := 0; j < i+5; j++ {
-			group.Submit(func() {
-				time.Sleep(1 * time.Millisecond)
-				atomic.AddInt32(&doneCount, 1)
-			})
-			taskCount++
-		}
-		groups = append(groups, group)
-	}
-
-	// Wait for all groups to complete
-	for _, group := range groups {
-		group.Wait()
-	}
-
-	assertEqual(t, int32(taskCount), atomic.LoadInt32(&doneCount))
-}
-
 func TestPoolWithCustomStrategy(t *testing.T) {
 
 	pool := pond.New(3, 3, pond.Strategy(pond.RatedResizer(2)))

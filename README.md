@@ -25,7 +25,8 @@ Some common scenarios include:
   - Submitting tasks to a pool in a fire-and-forget fashion
   - Submitting tasks to a pool and waiting for them to complete
   - Submitting tasks to a pool with a deadline
-  - Submitting a group of related tasks and waiting for them to complete
+  - Submitting a group of tasks and waiting for them to complete
+  - Submitting a group of tasks associated to a Context
   - Getting the number of running workers (goroutines)
   - Stopping a worker pool
 - Task panics are handled gracefully (configurable panic handler)
@@ -104,7 +105,7 @@ func main() {
 }
 ```
 
-### Submitting groups of related tasks
+### Submitting a group of tasks
 
 ``` go
 package main
@@ -124,7 +125,7 @@ func main() {
 	// Create a task group
 	group := pool.Group()
 
-	// Submit a group of related tasks
+	// Submit a group of tasks
 	for i := 0; i < 20; i++ {
 		n := i
 		group.Submit(func() {
@@ -134,6 +135,59 @@ func main() {
 
 	// Wait for all tasks in the group to complete
 	group.Wait()
+}
+```
+
+### Submitting a group of tasks associated to a context (**since v1.8.0**)
+
+This feature provides synchronization, error propagation, and Context cancelation for subtasks of a common task. Similar to `errgroup.Group` from [`golang.org/x/sync/errgroup`](https://pkg.go.dev/golang.org/x/sync/errgroup) package with concurrency bounded by the worker pool.
+
+``` go
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+
+	"github.com/alitto/pond"
+)
+
+func main() {
+
+	// Create a worker pool
+	pool := pond.New(10, 1000)
+	defer pool.StopAndWait()
+
+	// Create a task group associated to a context
+	group, ctx := pool.GroupContext(context.Background())
+
+	var urls = []string{
+		"https://www.golang.org/",
+		"https://www.google.com/",
+		"https://www.github.com/",
+	}
+
+	// Submit tasks to fetch each URL
+	for _, url := range urls {
+		url := url
+		group.Submit(func() error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				resp.Body.Close()
+			}
+			return err
+		})
+	}
+
+	// Wait for all HTTP requests to complete.
+	err := group.Wait()
+	if err != nil {
+		fmt.Printf("Failed to fetch URLs: %v", err)
+	} else {
+		fmt.Println("Successfully fetched all URLs")
+	}
 }
 ```
 
@@ -213,7 +267,8 @@ In our [Prometheus example](./examples/prometheus/prometheus.go) we showcase how
 - [Creating a worker pool with fixed size](./examples/fixed_size/fixed_size.go)
 - [Creating a worker pool with a Context](./examples/pool_context/pool_context.go)
 - [Exporting worker pool metrics to Prometheus](./examples/prometheus/prometheus.go)
-- [Submitting groups of related tasks](./examples/task_group/task_group.go)
+- [Submitting a group of tasks](./examples/task_group/task_group.go)
+- [Submitting a group of tasks associated to a context](./examples/group_context/group_context.go)
 
 ## API Reference
 

@@ -487,6 +487,21 @@ func (p *WorkerPool) Group() *TaskGroup {
 	}
 }
 
+// GroupContext creates a new task group and an associated Context derived from ctx.
+//
+// The derived Context is canceled the first time a function submitted to the group
+// returns a non-nil error or the first time Wait returns, whichever occurs first.
+func (p *WorkerPool) GroupContext(ctx context.Context) (*TaskGroupWithContext, context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	return &TaskGroupWithContext{
+		TaskGroup: TaskGroup{
+			pool: p,
+		},
+		ctx:    ctx,
+		cancel: cancel,
+	}, ctx
+}
+
 // worker launches a worker goroutine
 func worker(context context.Context, firstTask func(), tasks <-chan func(), idleWorkerCount *int32, exitHandler func(), taskExecutor func(func())) {
 
@@ -527,26 +542,4 @@ func worker(context context.Context, firstTask func(), tasks <-chan func(), idle
 			atomic.AddInt32(idleWorkerCount, 1)
 		}
 	}
-}
-
-// TaskGroup represents a group of related tasks
-type TaskGroup struct {
-	pool      *WorkerPool
-	waitGroup sync.WaitGroup
-}
-
-// Submit adds a task to this group and sends it to the worker pool to be executed
-func (g *TaskGroup) Submit(task func()) {
-	g.waitGroup.Add(1)
-	g.pool.Submit(func() {
-		defer g.waitGroup.Done()
-		task()
-	})
-}
-
-// Wait waits until all the tasks in this group have completed
-func (g *TaskGroup) Wait() {
-
-	// Wait for all tasks to complete
-	g.waitGroup.Wait()
 }
