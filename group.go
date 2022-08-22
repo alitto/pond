@@ -29,7 +29,7 @@ func (g *TaskGroup) Wait() {
 	g.waitGroup.Wait()
 }
 
-// TaskGroup represents a group of related tasks associated to a context
+// TaskGroupWithContext represents a group of related tasks associated to a context
 type TaskGroupWithContext struct {
 	TaskGroup
 	ctx     context.Context
