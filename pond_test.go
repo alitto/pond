@@ -44,5 +44,32 @@ func TestPurgeAfterPoolStopped(t *testing.T) {
 
 	// Simulate purger goroutine attempting to stop a worker after tasks channel is closed
 	atomic.StoreInt32(&pool.stopped, 1)
-	pool.stopIdleWorker()
+	pool.maybeStopIdleWorker()
+}
+
+// See: https://github.com/alitto/pond/issues/33
+func TestPurgeDuringSubmit(t *testing.T) {
+
+	pool := New(1, 1)
+
+	var doneCount int32
+
+	// Submit a task to ensure at least 1 worker is started
+	pool.SubmitAndWait(func() {
+		atomic.AddInt32(&doneCount, 1)
+	})
+
+	assertEqual(t, 1, pool.IdleWorkers())
+
+	// Stop an idle worker right before submitting another task
+	pool.maybeStopIdleWorker()
+	pool.Submit(func() {
+		atomic.AddInt32(&doneCount, 1)
+	})
+
+	pool.StopAndWait()
+
+	assertEqual(t, int32(2), atomic.LoadInt32(&doneCount))
+	assertEqual(t, 0, pool.RunningWorkers())
+
 }

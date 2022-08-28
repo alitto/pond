@@ -21,7 +21,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
     - name: Test
-      run: go test -race -v ./
+      run: make test
   codecov:
     name: Upload coverage report to Codecov
     runs-on: ubuntu-latest
@@ -33,9 +33,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
     - name: Test
-      run: go test -race -v -coverprofile=coverage.txt -covermode=atomic ./
+      run: make coverage
     - uses: codecov/codecov-action@v2
       with:
-        files: ./coverage.txt
+        files: coverage.out
         fail_ci_if_error: true
         verbose: true
