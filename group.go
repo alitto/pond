@@ -32,10 +32,14 @@ func (g *TaskGroup) Wait() {
 // TaskGroupWithContext represents a group of related tasks associated to a context
 type TaskGroupWithContext struct {
 	TaskGroup
-	ctx     context.Context
-	cancel  context.CancelFunc
-	errOnce sync.Once
-	err     error
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	errSync struct {
+		once  sync.Once
+		guard sync.RWMutex
+	}
+	err error
 }
 
 // Submit adds a task to this group and sends it to the worker pool to be executed
@@ -57,8 +61,11 @@ func (g *TaskGroupWithContext) Submit(task func() error) {
 		// don't actually ignore errors
 		err := task()
 		if err != nil {
-			g.errOnce.Do(func() {
+			g.errSync.once.Do(func() {
+				g.errSync.guard.Lock()
 				g.err = err
+				g.errSync.guard.Unlock()
+
 				if g.cancel != nil {
 					g.cancel()
 				}
@@ -86,5 +93,9 @@ func (g *TaskGroupWithContext) Wait() error {
 	case <-g.ctx.Done():
 	}
 
-	return g.err
+	g.errSync.guard.RLock()
+	err := g.err
+	g.errSync.guard.RUnlock()
+
+	return err
 }
