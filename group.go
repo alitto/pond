@@ -50,26 +50,16 @@ func (g *TaskGroupWithContext) Submit(task func() error) {
 		defer g.waitGroup.Done()
 
 		// If context has already been cancelled, skip task execution
-		if g.ctx != nil {
-			select {
-			case <-g.ctx.Done():
-				return
-			default:
-			}
+		select {
+		case <-g.ctx.Done():
+			return
+		default:
 		}
 
 		// don't actually ignore errors
 		err := task()
 		if err != nil {
-			g.errSync.once.Do(func() {
-				g.errSync.guard.Lock()
-				g.err = err
-				g.errSync.guard.Unlock()
-
-				if g.cancel != nil {
-					g.cancel()
-				}
-			})
+			g.setError(err)
 		}
 	})
 }
@@ -91,11 +81,26 @@ func (g *TaskGroupWithContext) Wait() error {
 		// If context was provided, cancel it to signal all running tasks to stop
 		g.cancel()
 	case <-g.ctx.Done():
+		g.setError(g.ctx.Err())
 	}
 
+	return g.getError()
+}
+
+func (g *TaskGroupWithContext) getError() error {
 	g.errSync.guard.RLock()
 	err := g.err
 	g.errSync.guard.RUnlock()
-
 	return err
+}
+
+func (g *TaskGroupWithContext) setError(err error) {
+	g.errSync.once.Do(func() {
+		g.errSync.guard.Lock()
+		g.err = err
+		g.errSync.guard.Unlock()
+
+		// Cancel execution of any pending task in this group
+		g.cancel()
+	})
 }
