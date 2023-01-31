@@ -71,6 +71,14 @@ func Context(parentCtx context.Context) Option {
 
 // WorkerPool models a pool of workers
 type WorkerPool struct {
+	// Atomic counters, should be placed first so alignment is guaranteed
+	// for atomic operations.
+	workerCount         int32
+	idleWorkerCount     int32
+	waitingTaskCount    uint64
+	submittedTaskCount  uint64
+	successfulTaskCount uint64
+	failedTaskCount     uint64
 	// Configurable settings
 	maxWorkers    int
 	maxCapacity   int
@@ -80,13 +88,6 @@ type WorkerPool struct {
 	panicHandler  func(interface{})
 	context       context.Context
 	contextCancel context.CancelFunc
-	// Atomic counters
-	workerCount         int32
-	idleWorkerCount     int32
-	waitingTaskCount    uint64
-	submittedTaskCount  uint64
-	successfulTaskCount uint64
-	failedTaskCount     uint64
 	// Private properties
 	tasks            chan func()
 	tasksCloseOnce   sync.Once
