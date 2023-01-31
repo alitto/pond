@@ -120,3 +120,34 @@ func TestGroupContextWithNilContext(t *testing.T) {
 
 	assertEqual(t, "a non-nil context needs to be specified when using GroupContext", thrownPanic)
 }
+
+func TestGroupContextWithCanceledContext(t *testing.T) {
+
+	pool := pond.New(3, 100)
+	assertEqual(t, 0, pool.RunningWorkers())
+
+	// Submit a group of tasks
+	var doneCount, startedCount int32
+	userCtx, cancel := context.WithCancel(context.Background())
+	group, ctx := pool.GroupContext(userCtx)
+	for i := 0; i < 10; i++ {
+		group.Submit(func() error {
+			atomic.AddInt32(&startedCount, 1)
+
+			select {
+			case <-time.After(10 * time.Millisecond):
+				atomic.AddInt32(&doneCount, 1)
+			case <-ctx.Done():
+			}
+
+			return nil
+		})
+	}
+
+	// Cancel context right after submitting tasks
+	cancel()
+
+	err := group.Wait()
+	assertEqual(t, context.Canceled, err)
+	assertEqual(t, int32(0), atomic.LoadInt32(&doneCount))
+}
