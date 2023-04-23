@@ -193,49 +193,61 @@ func main() {
 
 ### Pool Configuration Options
 
-- **MinWorkers**: Specifies the minimum number of worker goroutines that must be running at any given time. These goroutines are started when the pool is created. The default value is 0. Example:
+#### MinWorkers
 
-	``` go
-	// This will create a pool with 5 running worker goroutines 
-	pool := pond.New(10, 1000, pond.MinWorkers(5))
-	```
+Specifies the minimum number of worker goroutines that must be running at any given time. These goroutines are started when the pool is created. The default value is 0. Example:
 
-- **IdleTimeout**: Defines how long to wait before removing idle worker goroutines from the pool. The default value is 5 seconds. Example:
+``` go
+// This will create a pool with 5 running worker goroutines 
+pool := pond.New(10, 1000, pond.MinWorkers(5))
+```
 
-	``` go
-	// This will create a pool that will remove workers 100ms after they become idle 
-	pool := pond.New(10, 1000, pond.IdleTimeout(100 * time.Millisecond))
-	``` 
+#### IdleTimeout
 
-- **PanicHandler**: Allows to configure a custom function to handle panics thrown by tasks submitted to the pool. The default handler just writes a message to standard output using `fmt.Printf` with the following contents: `Worker exits from a panic: [panic] \n Stack trace: [stack trace]`).  Example:
+Defines how long to wait before removing idle worker goroutines from the pool. The default value is 5 seconds. Example:
 
-	```go
-	// Custom panic handler function
-	panicHandler := func(p interface{}) {
-		fmt.Printf("Task panicked: %v", p)
-	}
+``` go
+// This will create a pool that will remove workers 100ms after they become idle 
+pool := pond.New(10, 1000, pond.IdleTimeout(100 * time.Millisecond))
+``` 
 
-	// This will create a pool that will handle panics using a custom panic handler
-	pool := pond.New(10, 1000, pond.PanicHandler(panicHandler)))
-	```
+#### PanicHandler
 
-- **Strategy**: Configures the strategy used to resize the pool when backpressure is detected. You can create a custom strategy by implementing the `pond.ResizingStrategy` interface or choose one of the 3 presets:
-    - **Eager**: maximizes responsiveness at the expense of higher resource usage, which can reduce throughput under certain conditions. This strategy is meant for worker pools that will operate at a small percentage of their capacity most of the time and may occasionally receive bursts of tasks. This is the default strategy.
-	- **Balanced**: tries to find a balance between responsiveness and throughput. It's suitable for general purpose worker pools or those that will operate close to 50% of their capacity most of the time.
-	- **Lazy**: maximizes throughput at the expense of responsiveness. This strategy is meant for worker pools that will operate close to their max. capacity most of the time.
+Allows to configure a custom function to handle panics thrown by tasks submitted to the pool. The default handler just writes a message to standard output using `fmt.Printf` with the following contents: `Worker exits from a panic: [panic] \n Stack trace: [stack trace]`).  Example:
 
-	``` go
-	// Example: create pools with different resizing strategies
-	eagerPool := pond.New(10, 1000, pond.Strategy(pond.Eager()))
-	balancedPool := pond.New(10, 1000, pond.Strategy(pond.Balanced()))
-	lazyPool := pond.New(10, 1000, pond.Strategy(pond.Lazy()))
-	```
-- **Context**: Configures a parent context on this pool to stop all workers when it is cancelled. The default value `context.Background()`. Example:
+```go
+// Custom panic handler function
+panicHandler := func(p interface{}) {
+	fmt.Printf("Task panicked: %v", p)
+}
 
-	``` go
-	// This creates a pool that is stopped when myCtx is cancelled 
-	pool := pond.New(10, 1000, pond.Context(myCtx))
-	``` 
+// This will create a pool that will handle panics using a custom panic handler
+pool := pond.New(10, 1000, pond.PanicHandler(panicHandler)))
+```
+
+#### Strategy
+
+Configures the strategy used to resize the pool when backpressure is detected. You can create a custom strategy by implementing the `pond.ResizingStrategy` interface or choose one of the 3 presets:
+
+- **Eager**: maximizes responsiveness at the expense of higher resource usage, which can reduce throughput under certain conditions. This strategy is meant for worker pools that will operate at a small percentage of their capacity most of the time and may occasionally receive bursts of tasks. This is the default strategy.
+- **Balanced**: tries to find a balance between responsiveness and throughput. It's suitable for general purpose worker pools or those that will operate close to 50% of their capacity most of the time.
+- **Lazy**: maximizes throughput at the expense of responsiveness. This strategy is meant for worker pools that will operate close to their max. capacity most of the time.
+
+``` go
+// Example: create pools with different resizing strategies
+eagerPool := pond.New(10, 1000, pond.Strategy(pond.Eager()))
+balancedPool := pond.New(10, 1000, pond.Strategy(pond.Balanced()))
+lazyPool := pond.New(10, 1000, pond.Strategy(pond.Lazy()))
+```
+
+#### Context
+
+Configures a parent context on this pool to stop all workers when it is cancelled. The default value `context.Background()`. Example:
+
+``` go
+// This creates a pool that is stopped when myCtx is cancelled 
+pool := pond.New(10, 1000, pond.Context(myCtx))
+``` 
 
 ### Resizing strategies
 
