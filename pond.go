@@ -73,12 +73,13 @@ func Context(parentCtx context.Context) Option {
 type WorkerPool struct {
 	// Atomic counters, should be placed first so alignment is guaranteed
 	// for atomic operations.
-	workerCount         int32
-	idleWorkerCount     int32
-	waitingTaskCount    uint64
-	submittedTaskCount  uint64
-	successfulTaskCount uint64
-	failedTaskCount     uint64
+	workerCount              int32
+	idleWorkerCount          int32
+	waitingTaskCount         uint64
+	submittedTaskCount       uint64
+	successfulTaskCount      uint64
+	failedTaskCount          uint64
+	timedOutInQueueTaskCount uint64
 	// Configurable settings
 	maxWorkers    int
 	maxCapacity   int
@@ -205,6 +206,11 @@ func (p *WorkerPool) FailedTasks() uint64 {
 	return atomic.LoadUint64(&p.failedTaskCount)
 }
 
+// FailedTasks returns the total number of tasks that timed-out in queue since the pool was created
+func (p *WorkerPool) TimoutOutInQueueTasks() uint64 {
+	return atomic.LoadUint64(&p.timedOutInQueueTaskCount)
+}
+
 // CompletedTasks returns the total number of tasks that have completed their exection either successfully
 // or with panic since the pool was created
 func (p *WorkerPool) CompletedTasks() uint64 {
@@ -306,6 +312,7 @@ func (p *WorkerPool) SubmitBefore(task func(), deadline time.Duration) {
 		select {
 		case <-timer.C:
 			// Deadline was reached, abort the task
+			atomic.AddUint64(&p.timedOutInQueueTaskCount, 1)
 		default:
 			// Deadline not reached, execute the task
 			defer timer.Stop()

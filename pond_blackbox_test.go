@@ -198,8 +198,9 @@ func TestSubmitBefore(t *testing.T) {
 
 	pool.StopAndWait()
 
-	// Only 2 tasks must have executed
+	// Only 2 tasks must have executed and 1 timed out
 	assertEqual(t, int32(2), atomic.LoadInt32(&doneCount))
+	assertEqual(t, uint64(1), pool.TimoutOutInQueueTasks())
 }
 
 func TestSubmitBeforeWithNilTask(t *testing.T) {
