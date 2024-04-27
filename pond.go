@@ -207,7 +207,7 @@ func (p *WorkerPool) FailedTasks() uint64 {
 }
 
 // FailedTasks returns the total number of tasks that timed-out in queue since the pool was created
-func (p *WorkerPool) TimoutOutInQueueTasks() uint64 {
+func (p *WorkerPool) TimedOutInQueueTasks() uint64 {
 	return atomic.LoadUint64(&p.timedOutInQueueTaskCount)
 }
 
@@ -313,6 +313,7 @@ func (p *WorkerPool) SubmitBefore(task func(), deadline time.Duration) {
 		case <-timer.C:
 			// Deadline was reached, abort the task
 			atomic.AddUint64(&p.timedOutInQueueTaskCount, 1)
+			panic(fmt.Sprintf("task timed out in queue after %s", deadline))
 		default:
 			// Deadline not reached, execute the task
 			defer timer.Stop()
