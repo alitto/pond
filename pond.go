@@ -80,6 +80,8 @@ type WorkerPool struct {
 	successfulTaskCount      uint64
 	failedTaskCount          uint64
 	timedOutInQueueTaskCount uint64
+	startedTaskCount         uint64
+	lastStartedTaskTime      time.Time
 	// Configurable settings
 	maxWorkers    int
 	maxCapacity   int
@@ -188,6 +190,16 @@ func (p *WorkerPool) Strategy() ResizingStrategy {
 // SubmittedTasks returns the total number of tasks submitted since the pool was created
 func (p *WorkerPool) SubmittedTasks() uint64 {
 	return atomic.LoadUint64(&p.submittedTaskCount)
+}
+
+// StartedTasks returns the total number of tasks submitted & started since the pool was created
+func (p *WorkerPool) StartedTasks() uint64 {
+	return atomic.LoadUint64(&p.startedTaskCount)
+}
+
+// LastStartedTaskTime returns the last time a task was taken from the queue by a worker for processing
+func (p *WorkerPool) LastStartedTaskTime() time.Time {
+	return p.lastStartedTaskTime
 }
 
 // WaitingTasks returns the current number of tasks in the queue that are waiting to be executed
@@ -457,6 +469,10 @@ func (p *WorkerPool) executeTask(task func(), isFirstTask bool) {
 
 	// Decrement waiting task count
 	atomic.AddUint64(&p.waitingTaskCount, ^uint64(0))
+
+	// Increment started task count
+	atomic.AddUint64(&p.startedTaskCount, 1)
+	p.lastStartedTaskTime = time.Now()
 
 	// Execute task
 	task()
