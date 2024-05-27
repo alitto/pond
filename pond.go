@@ -522,28 +522,40 @@ func (p *WorkerPool) resetWorkerCount() {
 }
 
 // Group creates a new task group
-func (p *WorkerPool) Group() *TaskGroup {
-	return &TaskGroup{
+func (p *WorkerPool) Group(options ...GroupOption) *TaskGroup {
+	group := &TaskGroup{
 		pool: p,
 	}
+
+	for _, opt := range options {
+		opt(group)
+	}
+
+	return group
 }
 
 // GroupContext creates a new task group and an associated Context derived from ctx.
 //
 // The derived Context is canceled the first time a function submitted to the group
 // returns a non-nil error or the first time Wait returns, whichever occurs first.
-func (p *WorkerPool) GroupContext(ctx context.Context) (*TaskGroupWithContext, context.Context) {
+func (p *WorkerPool) GroupContext(ctx context.Context, options ...GroupOption) (*TaskGroupWithContext, context.Context) {
 
 	if ctx == nil {
 		panic("a non-nil context needs to be specified when using GroupContext")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	return &TaskGroupWithContext{
+	group := &TaskGroupWithContext{
 		TaskGroup: TaskGroup{
 			pool: p,
 		},
 		ctx:    ctx,
 		cancel: cancel,
-	}, ctx
+	}
+
+	for _, opt := range options {
+		opt(&group.TaskGroup)
+	}
+
+	return group, ctx
 }

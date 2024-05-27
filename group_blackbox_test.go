@@ -38,6 +38,28 @@ func TestGroupSubmit(t *testing.T) {
 	assertEqual(t, int32(taskCount), atomic.LoadInt32(&doneCount))
 }
 
+func TestGroupSubmitWithTasksLimit(t *testing.T) {
+
+	pool := pond.New(5, 50)
+	assertEqual(t, 0, pool.RunningWorkers())
+
+	group := pool.Group(pond.GroupMaxTasks(5))
+
+	// Submit groups of tasks
+	var doneCount, taskCount int32
+	for i := 0; i < 100; i++ {
+		group.Submit(func() {
+			time.Sleep(1 * time.Millisecond)
+			atomic.AddInt32(&doneCount, 1)
+		})
+		taskCount++
+	}
+
+	group.Wait()
+
+	assertEqual(t, int32(taskCount), atomic.LoadInt32(&doneCount))
+}
+
 func TestGroupContext(t *testing.T) {
 
 	pool := pond.New(3, 100)
