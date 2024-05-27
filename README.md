@@ -249,6 +249,20 @@ Configures a parent context on this pool to stop all workers when it is cancelle
 pool := pond.New(10, 1000, pond.Context(myCtx))
 ``` 
 
+### WorkGroup configuration options
+
+#### MaxTasks
+
+Limits the number of tasks that can be executed concurrently in the group. Example:
+
+``` go
+pool := pond.New(10, 100)
+
+// This a group that will execute at most 30 tasks at time. Any exceding submision to the group will be blocked
+group := pool.Group(pond.GroupMaxTasks(30))
+``` 
+
+
 ### Resizing strategies
 
 The following chart illustrates the behaviour of the different pool resizing strategies as the number of submitted tasks increases. Each line represents the number of worker goroutines in the pool (pool size) and the x-axis reflects the number of submitted tasks (cumulative). 

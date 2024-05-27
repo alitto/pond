@@ -3,20 +3,51 @@ package pond
 import (
 	"context"
 	"sync"
+
+	"golang.org/x/sync/semaphore"
 )
+
+// GroupOption represents an option that can be passed when instantiating a worker pool group to customize it
+type GroupOption func(*TaskGroup)
+
+// GroupMaxTasks allows to change the maximum number of tasks that can be added to a worker pool group.
+func GroupMaxTasks(maxTasks int) GroupOption {
+	return func(group *TaskGroup) {
+		if maxTasks < 0 {
+			maxTasks = 0
+		}
+
+		if maxTasks > 0 {
+			group.tasksLimiter = semaphore.NewWeighted(int64(maxTasks))
+		} else {
+			group.tasksLimiter = nil
+		}
+	}
+}
 
 // TaskGroup represents a group of related tasks
 type TaskGroup struct {
 	pool      *WorkerPool
 	waitGroup sync.WaitGroup
+
+	tasksLimiter *semaphore.Weighted
 }
 
 // Submit adds a task to this group and sends it to the worker pool to be executed
 func (g *TaskGroup) Submit(task func()) {
+	if g.tasksLimiter != nil {
+		g.tasksLimiter.Acquire(context.Background(), 1)
+	}
+
 	g.waitGroup.Add(1)
 
 	g.pool.Submit(func() {
 		defer g.waitGroup.Done()
+		defer func() {
+			if g.tasksLimiter != nil {
+				g.tasksLimiter.Release(1)
+			}
+		}()
 
 		task()
 	})
@@ -44,10 +75,23 @@ type TaskGroupWithContext struct {
 
 // Submit adds a task to this group and sends it to the worker pool to be executed
 func (g *TaskGroupWithContext) Submit(task func() error) {
+	if g.tasksLimiter != nil {
+		err := g.tasksLimiter.Acquire(g.ctx, 1)
+		if err != nil {
+			g.setError(err)
+			return
+		}
+	}
+
 	g.waitGroup.Add(1)
 
 	g.pool.Submit(func() {
 		defer g.waitGroup.Done()
+		defer func() {
+			if g.tasksLimiter != nil {
+				g.tasksLimiter.Release(1)
+			}
+		}()
 
 		// If context has already been cancelled, skip task execution
 		select {
