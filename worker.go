@@ -26,13 +26,22 @@ func worker(context context.Context, waitGroup *sync.WaitGroup, firstTask func()
 			}
 			return
 		case task, ok := <-tasks:
-			if task == nil || !ok {
-				// We have received a signal to exit
-				return
-			}
+			// Prioritize context.Done statement (https://stackoverflow.com/questions/46200343/force-priority-of-go-select-statement)
+			select {
+			case <-context.Done():
+				if task != nil && ok {
+					// We have received a task, ignore it
+					taskWaitGroup.Done()
+				}
+			default:
+				if task == nil || !ok {
+					// We have received a signal to exit
+					return
+				}
 
-			// We have received a task, execute it
-			taskExecutor(task, false)
+				// We have received a task, execute it
+				taskExecutor(task, false)
+			}
 		}
 	}
 }
