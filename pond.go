@@ -353,11 +353,6 @@ func (p *WorkerPool) stop(waitForQueuedTasksToComplete bool) {
 	// Mark pool as stopped
 	atomic.StoreInt32(&p.stopped, 1)
 
-	// close tasks channel (only once, in case multiple concurrent calls to StopAndWait are made)
-	p.tasksCloseOnce.Do(func() {
-		close(p.tasks)
-	})
-
 	if waitForQueuedTasksToComplete {
 		// Wait for all queued tasks to complete
 		p.tasksWaitGroup.Wait()
@@ -368,6 +363,11 @@ func (p *WorkerPool) stop(waitForQueuedTasksToComplete bool) {
 
 	// Terminate all workers & purger goroutine
 	p.contextCancel()
+
+	// close tasks channel (only once, in case multiple concurrent calls to StopAndWait are made)
+	p.tasksCloseOnce.Do(func() {
+		close(p.tasks)
+	})
 
 	// Wait for all workers & purger goroutine to exit
 	p.workersWaitGroup.Wait()
