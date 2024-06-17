@@ -34,8 +34,10 @@ jobs:
       uses: actions/checkout@v2
     - name: Test
       run: make coverage
-    - uses: codecov/codecov-action@v3
+    - uses: codecov/codecov-action@v4
       with:
         files: coverage.out
         fail_ci_if_error: true
         verbose: true
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
