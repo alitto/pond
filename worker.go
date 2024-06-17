@@ -21,9 +21,7 @@ func worker(context context.Context, waitGroup *sync.WaitGroup, firstTask func()
 		select {
 		case <-context.Done():
 			// Pool context was cancelled, empty tasks channel and exit
-			for _ = range tasks {
-				taskWaitGroup.Done()
-			}
+			drainTasks(tasks, taskWaitGroup)
 			return
 		case task, ok := <-tasks:
 			// Prioritize context.Done statement (https://stackoverflow.com/questions/46200343/force-priority-of-go-select-statement)
@@ -43,5 +41,12 @@ func worker(context context.Context, waitGroup *sync.WaitGroup, firstTask func()
 				taskExecutor(task, false)
 			}
 		}
+	}
+}
+
+// drainPendingTasks discards queued tasks and decrements the corresponding wait group
+func drainTasks(tasks <-chan func(), tasksWaitGroup *sync.WaitGroup) {
+	for _ = range tasks {
+		tasksWaitGroup.Done()
 	}
 }
