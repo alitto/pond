@@ -39,6 +39,9 @@ func TestPurgeAfterPoolStopped(t *testing.T) {
 	pool.SubmitAndWait(func() {
 		atomic.AddInt32(&doneCount, 1)
 	})
+
+	time.Sleep(10 * time.Millisecond)
+
 	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
 	assertEqual(t, 1, pool.RunningWorkers())
 
@@ -58,6 +61,8 @@ func TestPurgeDuringSubmit(t *testing.T) {
 	pool.SubmitAndWait(func() {
 		atomic.AddInt32(&doneCount, 1)
 	})
+
+	time.Sleep(10 * time.Millisecond)
 
 	assertEqual(t, 1, pool.IdleWorkers())
 
