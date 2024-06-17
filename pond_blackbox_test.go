@@ -542,6 +542,47 @@ func TestSubmitWithContext(t *testing.T) {
 	assertEqual(t, int32(0), atomic.LoadInt32(&doneCount))
 }
 
+func TestSubmitWithContextCancelWithIdleTasks(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pool := pond.New(1, 5, pond.Context(ctx))
+
+	var doneCount, taskCount int32
+
+	// Submit a long-running, cancellable task
+	pool.Submit(func() {
+		atomic.AddInt32(&taskCount, 1)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Minute):
+			atomic.AddInt32(&doneCount, 1)
+			return
+		}
+	})
+
+	// Submit a long-running, cancellable task
+	pool.Submit(func() {
+		atomic.AddInt32(&taskCount, 1)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Minute):
+			atomic.AddInt32(&doneCount, 1)
+			return
+		}
+	})
+
+	// Cancel the context
+	cancel()
+
+	pool.StopAndWait()
+
+	assertEqual(t, int32(1), atomic.LoadInt32(&taskCount))
+	assertEqual(t, int32(0), atomic.LoadInt32(&doneCount))
+}
+
 func TestConcurrentStopAndWait(t *testing.T) {
 
 	pool := pond.New(1, 5)

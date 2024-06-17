@@ -364,13 +364,13 @@ func (p *WorkerPool) stop(waitForQueuedTasksToComplete bool) {
 	// Terminate all workers & purger goroutine
 	p.contextCancel()
 
-	// Wait for all workers & purger goroutine to exit
-	p.workersWaitGroup.Wait()
-
 	// close tasks channel (only once, in case multiple concurrent calls to StopAndWait are made)
 	p.tasksCloseOnce.Do(func() {
 		close(p.tasks)
 	})
+
+	// Wait for all workers & purger goroutine to exit
+	p.workersWaitGroup.Wait()
 }
 
 // purge represents the work done by the purger goroutine
@@ -420,7 +420,7 @@ func (p *WorkerPool) maybeStartWorker(firstTask func()) bool {
 	}
 
 	// Launch worker goroutine
-	go worker(p.context, &p.workersWaitGroup, firstTask, p.tasks, p.executeTask)
+	go worker(p.context, &p.workersWaitGroup, firstTask, p.tasks, p.executeTask, &p.tasksWaitGroup)
 
 	return true
 }
