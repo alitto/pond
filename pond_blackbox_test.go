@@ -120,7 +120,7 @@ func TestSubmitAndStopWithoutWaiting(t *testing.T) {
 	<-started
 
 	// Stop without waiting for the rest of the tasks to start
-	pool.Stop()
+	ctx := pool.Stop()
 
 	// Let the first task complete now
 	completed <- true
@@ -129,7 +129,7 @@ func TestSubmitAndStopWithoutWaiting(t *testing.T) {
 	assertEqual(t, int32(1), atomic.LoadInt32(&doneCount))
 
 	// Make sure the exit lines in the worker pool are executed and covered
-	time.Sleep(6 * time.Millisecond)
+	<-ctx.Done()
 }
 
 func TestSubmitWithNilTask(t *testing.T) {
