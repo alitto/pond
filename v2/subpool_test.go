@@ -47,7 +47,7 @@ func TestSubpool(t *testing.T) {
 			})
 		}
 		wg.Wait()
-		subsubpool.StopAndWait()
+		subsubpool.Stop().Wait()
 		subsubpoolElapsedTime = time.Since(start)
 		completed <- struct{}{}
 	}()
@@ -75,7 +75,7 @@ func TestSubpoolStopAndWait(t *testing.T) {
 		})
 	}
 
-	subpool.StopAndWait()
+	subpool.Stop().Wait()
 
 	assertEqual(t, int64(taskCount), executedCount.Load())
 }

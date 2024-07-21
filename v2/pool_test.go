@@ -31,7 +31,7 @@ func TestWorkerPoolSubmit(t *testing.T) {
 
 	fmt.Printf("Submitted %d tasks\n", taskCount)
 
-	pool.StopAndWait()
+	pool.Stop().Wait()
 
 	assertEqual(t, int64(taskCount), executedCount.Load())
 }

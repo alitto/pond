@@ -11,8 +11,7 @@ var DEFAULT_TASKS_CHAN_LENGTH = 2048
 type Pool interface {
 	Context() context.Context
 	Submit(task func())
-	StopAndWait()
-	Stop() VoidContext
+	Stop() TaskContext[any]
 	Subpool(maxConcurrency int) Pool
 }
 
@@ -34,20 +33,12 @@ func (p *pool) Submit(task func()) {
 	p.dispatcher.Write(task)
 }
 
-func (p *pool) Stop() VoidContext {
-	stopFunc, stopCtx := wrapVoidFunc(func() {
+func (p *pool) Stop() TaskContext[any] {
+	return NewTask(func() {
 		p.dispatcher.CloseAndWait()
 		close(p.tasks)
 		p.workerWaitGroup.Wait()
-	}, p.ctx)
-
-	go stopFunc()
-
-	return stopCtx
-}
-
-func (p *pool) StopAndWait() {
-	p.Stop().Wait()
+	}).WithContext(p.Context()).Run()
 }
 
 func (p *pool) Subpool(maxConcurrency int) Pool {
