@@ -5,169 +5,57 @@ import (
 	"fmt"
 )
 
-type ResultAndErr interface {
-	Result() interface{}
-	Err() error
-}
-
-type resultOrErr struct {
+type outputOrErr[O any] struct {
 	err    error
-	result any
+	output O
 }
 
-func (r *resultOrErr) Result() interface{} {
-	return r.result
-}
-
-func (r *resultOrErr) Err() error {
+func (r *outputOrErr[O]) Err() error {
 	return r.err
 }
 
-func (r *resultOrErr) Error() string {
+func (r *outputOrErr[O]) Error() string {
 	if r.err != nil {
 		return r.err.Error()
 	}
-	return fmt.Sprintf("result: %#v", r.result)
+	return fmt.Sprintf("result: %#v", r.output)
 }
 
-type ResultContext[R any] interface {
+type TaskContext[O any] interface {
+	Done() <-chan struct{}
+	Err() error
+	Output() O
+	Wait() (O, error)
+	WaitErr() error
+}
+
+type taskContext[O any] struct {
 	context.Context
-	Wait() (R, error)
 }
 
-type resultContext[R any] struct {
-	context.Context
-}
-
-func (c *resultContext[R]) Wait() (R, error) {
-	<-c.Context.Done()
+func (c *taskContext[O]) Output() O {
 	cause := context.Cause(c.Context)
-	if r, ok := cause.(*resultOrErr); ok {
-		return r.Result().(R), r.Err()
+	if r, ok := cause.(*outputOrErr[O]); ok {
+		return r.output
 	}
-	var zero R
-	return zero, cause
+	var zero O
+	return zero
 }
 
-type VoidContext interface {
-	context.Context
-	Wait() error
-}
-
-type voidContext struct {
-	context.Context
-}
-
-func (c *voidContext) Wait() error {
-	<-c.Context.Done()
+func (c *taskContext[O]) Err() error {
 	cause := context.Cause(c.Context)
-	if r, ok := cause.(*resultOrErr); ok {
+	if r, ok := cause.(*outputOrErr[O]); ok {
 		return r.Err()
 	}
 	return cause
 }
 
-func deferFunc(cancel context.CancelCauseFunc) {
-	if p := recover(); p != nil {
-		cancel(&resultOrErr{err: fmt.Errorf("%w: %v", ErrPanic, p)})
-		return
-	}
+func (c *taskContext[O]) Wait() (O, error) {
+	<-c.Context.Done()
+	return c.Output(), c.Err()
 }
 
-func wrapFunc[R any, T FuncWithResult[R]](task T, parentCtx context.Context) (func(), *resultContext[R]) {
-	childCtx, cancel := context.WithCancelCause(parentCtx)
-
-	callCtx := &resultContext[R]{
-		Context: childCtx,
-	}
-
-	switch t := any(task).(type) {
-	case func() R:
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			result := t()
-			cancel(&resultOrErr{result: result})
-		}, callCtx
-	case func(context.Context) R:
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			result := t(callCtx)
-			cancel(&resultOrErr{result: result})
-		}, callCtx
-	case func() (R, error):
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			result, err := t()
-			cancel(&resultOrErr{result: result, err: err})
-		}, callCtx
-	case func(context.Context) (R, error):
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			result, err := t(callCtx)
-			cancel(&resultOrErr{result: result, err: err})
-		}, callCtx
-	default:
-		panic(fmt.Sprintf("Unsupported task type: %#v", task))
-	}
-}
-
-func wrapVoidFunc[T VoidFunc](task T, parentCtx context.Context) (func(), *voidContext) {
-	childCtx, cancel := context.WithCancelCause(parentCtx)
-
-	callCtx := &voidContext{
-		Context: childCtx,
-	}
-
-	switch t := any(task).(type) {
-	case func():
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			t()
-			cancel(&resultOrErr{})
-		}, callCtx
-	case func(context.Context):
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			t(callCtx)
-			cancel(&resultOrErr{})
-		}, callCtx
-	case func() error:
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			err := t()
-			cancel(&resultOrErr{err: err})
-		}, callCtx
-	case func(context.Context) error:
-		return func() {
-			defer func() {
-				deferFunc(cancel)
-			}()
-
-			err := t(callCtx)
-			cancel(&resultOrErr{err: err})
-		}, callCtx
-	default:
-		panic(fmt.Sprintf("Unsupported task type: %#v", task))
-	}
+func (c *taskContext[O]) WaitErr() error {
+	<-c.Context.Done()
+	return c.Err()
 }

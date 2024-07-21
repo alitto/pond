@@ -25,20 +25,12 @@ func (p *subpool) Submit(task func()) {
 	p.dispatcher.Write(task)
 }
 
-func (p *subpool) StopAndWait() {
-	p.Stop().Wait()
-}
-
-func (p *subpool) Stop() VoidContext {
-	stopFunc, stopCtx := wrapVoidFunc(func() {
+func (p *subpool) Stop() TaskContext[any] {
+	return NewTask(func() {
 		p.dispatcher.CloseAndWait()
 		p.waitGroup.Wait()
 		close(p.sem)
-	}, p.Context())
-
-	go stopFunc()
-
-	return stopCtx
+	}).WithContext(p.Context()).Run()
 }
 
 func (p *subpool) dispatch(incomingTasks []func()) {
