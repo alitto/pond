@@ -1,4 +1,4 @@
-module github.com/alitto/pond/v2/examples/inputtask
+module github.com/alitto/pond/v2/examples/async_task
 
 go 1.22
 
