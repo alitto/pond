@@ -6,46 +6,88 @@ import (
 	"sync/atomic"
 )
 
-var DEFAULT_TASKS_CHAN_LENGTH = 2048
+const DEFAULT_TASKS_CHAN_LENGTH = 2048
 
-type Pool interface {
+/**
+ * Interface implemented by all worker pools in this library.
+ * @param O The type of the output of the tasks submitted to the pool
+ */
+type Pool[O any] interface {
 	Context() context.Context
-	Submit(task func())
-	Stop() TaskContext[any]
-	Subpool(maxConcurrency int) Pool
+	Submit(task any) Future[O]
+	Go(task any)
+	Stop() Future[struct{}]
+	Subpool(maxConcurrency int) Pool[O]
+	Group() TaskGroup[O]
 }
 
-type pool struct {
+type pool[O any] struct {
 	ctx             context.Context
 	maxConcurrency  int
-	tasks           chan func()
+	tasks           chan any
 	tasksLen        int
 	workerCount     atomic.Int64
 	workerWaitGroup sync.WaitGroup
-	dispatcher      *dispatcher[func()]
+	dispatcher      *dispatcher[any]
+	// Subpool
+	parent    *pool[O]
+	waitGroup sync.WaitGroup
+	sem       chan struct{}
 }
 
-func (p *pool) Context() context.Context {
+func (p *pool[O]) Context() context.Context {
 	return p.ctx
 }
 
-func (p *pool) Submit(task func()) {
+func (p *pool[O]) Go(task any) {
+	validateTask[O](task)
+
 	p.dispatcher.Write(task)
 }
 
-func (p *pool) Stop() TaskContext[any] {
-	return NewTask(func() {
+func (p *pool[O]) Submit(task any) Future[O] {
+	validateTask[O](task)
+
+	future, resolve := newFuture[O](p.Context())
+
+	futureTask := futureTask[O]{
+		task:    task,
+		ctx:     future.Context(),
+		resolve: resolve,
+	}
+
+	p.dispatcher.Write(futureTask.Run)
+
+	return future
+}
+
+func (p *pool[O]) Stop() Future[struct{}] {
+	return Submit[struct{}](func() {
 		p.dispatcher.CloseAndWait()
+
+		p.waitGroup.Wait()
+
+		if p.sem != nil {
+			close(p.sem)
+		}
+
 		close(p.tasks)
+
 		p.workerWaitGroup.Wait()
-	}).WithContext(p.Context()).Run()
+	})
 }
 
-func (p *pool) Subpool(maxConcurrency int) Pool {
-	return newSubpool(p, maxConcurrency)
+func (p *pool[O]) Subpool(maxConcurrency int) Pool[O] {
+	return newPool(p.Context(), maxConcurrency, p)
 }
 
-func (p *pool) dispatch(incomingTasks []func()) {
+func (p *pool[O]) Group() TaskGroup[O] {
+	return &taskGroup[O]{
+		pool: p,
+	}
+}
+
+func (p *pool[O]) dispatch(incomingTasks []any) {
 
 	var workerCount int
 
@@ -84,13 +126,38 @@ func (p *pool) dispatch(incomingTasks []func()) {
 	}
 }
 
-func (p *pool) startWorker() {
+func (p *pool[O]) subpoolDispatch(incomingTasks []any) {
+
+	p.waitGroup.Add(len(incomingTasks))
+
+	// Submit tasks
+	for _, task := range incomingTasks {
+
+		select {
+		case <-p.Context().Done():
+			// Context canceled, exit
+			return
+		case p.sem <- struct{}{}:
+			// Acquired the semaphore, submit another task
+		}
+
+		subpoolTask := subpoolTask[O]{
+			task:      task,
+			sem:       p.sem,
+			waitGroup: &p.waitGroup,
+		}
+
+		p.parent.Go(subpoolTask.Run)
+	}
+}
+
+func (p *pool[O]) startWorker() {
 	p.workerWaitGroup.Add(1)
 	p.workerCount.Add(1)
 	go p.worker()
 }
 
-func (p *pool) worker() {
+func (p *pool[O]) worker() {
 	defer func() {
 		p.workerCount.Add(-1)
 		p.workerWaitGroup.Done()
@@ -109,7 +176,7 @@ func (p *pool) worker() {
 			}
 
 			// Execute task
-			task()
+			invokeTask[O](task, p.Context())
 		default:
 			// No tasks left, exit
 			return
@@ -117,20 +184,35 @@ func (p *pool) worker() {
 	}
 }
 
-func NewPool(ctx context.Context, maxConcurrency int) Pool {
+func newPool[O any](ctx context.Context, maxConcurrency int, parent *pool[O]) Pool[O] {
+	if ctx == nil {
+		panic("context cannot be nil")
+	}
+
 	tasksLen := DEFAULT_TASKS_CHAN_LENGTH
 	if maxConcurrency < tasksLen {
 		tasksLen = maxConcurrency
 	}
 
-	pool := &pool{
+	pool := &pool[O]{
 		ctx:            ctx,
 		maxConcurrency: maxConcurrency,
-		tasks:          make(chan func(), tasksLen),
+		tasks:          make(chan any, tasksLen),
 		tasksLen:       tasksLen,
+		parent:         parent,
 	}
 
-	pool.dispatcher = newDispatcher(ctx, pool.dispatch, int(tasksLen))
+	if parent != nil {
+		// Subpool
+		pool.sem = make(chan struct{}, maxConcurrency)
+		pool.dispatcher = newDispatcher(ctx, pool.subpoolDispatch, tasksLen)
+	} else {
+		pool.dispatcher = newDispatcher(ctx, pool.dispatch, tasksLen)
+	}
 
 	return pool
+}
+
+func NewPool[O any](ctx context.Context, maxConcurrency int) Pool[O] {
+	return newPool[O](ctx, maxConcurrency, nil)
 }
