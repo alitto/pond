@@ -2,6 +2,7 @@ package pond
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -17,9 +18,9 @@ func assertEqual(t *testing.T, expected interface{}, actual interface{}) {
 
 func TestWorkerPoolSubmit(t *testing.T) {
 
-	pool := NewPool(context.Background(), 10000)
+	pool := NewPool[any](context.Background(), 10000)
 
-	var taskCount int = 10000
+	var taskCount int = 100000
 	var executedCount atomic.Int64
 
 	for i := 0; i < taskCount; i++ {
@@ -34,4 +35,46 @@ func TestWorkerPoolSubmit(t *testing.T) {
 	pool.Stop().Wait()
 
 	assertEqual(t, int64(taskCount), executedCount.Load())
+}
+
+func TestPoolSubmitWait(t *testing.T) {
+
+	pool := NewPool[int](context.Background(), 10000)
+
+	task := pool.Submit(func() int {
+		return 5
+	})
+
+	out, err := task.Get()
+
+	assertEqual(t, nil, err)
+	assertEqual(t, 5, out)
+}
+
+func TestPoolSubmitTaskWithPanic(t *testing.T) {
+
+	pool := NewPool[int](context.Background(), 10000)
+
+	task := pool.Submit(func() int {
+		panic("dummy panic")
+	})
+
+	out, err := task.Get()
+
+	assertEqual(t, true, errors.Is(err, ErrPanic))
+	assertEqual(t, 0, out)
+}
+
+func TestPoolGo(t *testing.T) {
+
+	pool := NewPool[any](context.Background(), 10000)
+
+	done := make(chan int, 1)
+	pool.Go(func() {
+		done <- 3
+	})
+
+	pool.Stop().Wait()
+
+	assertEqual(t, 3, <-done)
 }
