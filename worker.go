@@ -31,6 +31,9 @@ func worker(context context.Context, waitGroup *sync.WaitGroup, firstTask func()
 					// We have received a task, ignore it
 					taskWaitGroup.Done()
 				}
+				// Pool context was cancelled, empty tasks channel and exit
+				drainTasks(tasks, taskWaitGroup)
+				return
 			default:
 				if task == nil || !ok {
 					// We have received a signal to exit
