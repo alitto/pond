@@ -370,13 +370,14 @@ func (p *WorkerPool) stop(waitForQueuedTasksToComplete bool) {
 	// Terminate all workers & purger goroutine
 	p.contextCancel()
 
+	// Wait for all workers & purger goroutine to exit
+	p.workersWaitGroup.Wait()
+
 	// close tasks channel (only once, in case multiple concurrent calls to StopAndWait are made)
 	p.tasksCloseOnce.Do(func() {
 		close(p.tasks)
 	})
 
-	// Wait for all workers & purger goroutine to exit
-	p.workersWaitGroup.Wait()
 }
 
 // purge represents the work done by the purger goroutine

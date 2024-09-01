@@ -49,7 +49,14 @@ func worker(context context.Context, waitGroup *sync.WaitGroup, firstTask func()
 
 // drainPendingTasks discards queued tasks and decrements the corresponding wait group
 func drainTasks(tasks <-chan func(), tasksWaitGroup *sync.WaitGroup) {
-	for _ = range tasks {
-		tasksWaitGroup.Done()
+	for {
+		select {
+		case task, ok := <-tasks:
+			if task != nil && ok {
+				tasksWaitGroup.Done()
+			}
+		default:
+			return
+		}
 	}
 }
