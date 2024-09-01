@@ -406,6 +406,28 @@ func TestPoolWithCustomIdleTimeout(t *testing.T) {
 	pool.StopAndWait()
 }
 
+func TestStopWithPurging(t *testing.T) {
+
+	pool := pond.New(5, 5, pond.IdleTimeout(100*time.Millisecond))
+
+	// Submit a task
+	for i := 0; i < 5; i++ {
+		pool.Submit(func() {
+			time.Sleep(10 * time.Millisecond)
+		})
+	}
+
+	assertEqual(t, 5, pool.RunningWorkers())
+
+	// Purge goroutine is clearing idle workers
+	time.Sleep(200 * time.Millisecond)
+
+	// Stop the pool to make sure there is no data race with purge goroutine
+	pool.StopAndWait()
+
+	assertEqual(t, 0, pool.RunningWorkers())
+}
+
 func TestPoolWithCustomPanicHandler(t *testing.T) {
 
 	var capturedPanic interface{} = nil
