@@ -1,9 +1,9 @@
-module github.com/alitto/pond/examples/fixed_size
+module github.com/alitto/pond/v2/examples/fixed_size
 
-go 1.18
+go 1.22
 
 require (
-	github.com/alitto/pond v1.7.1
+	github.com/alitto/pond/v2 v2.0.0
 	github.com/prometheus/client_golang v1.11.1
 )
 
@@ -19,4 +19,4 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 )
 
-replace github.com/alitto/pond => ../../
+replace github.com/alitto/pond/v2 => ../../

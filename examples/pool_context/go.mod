@@ -1,7 +1,7 @@
-module github.com/alitto/pond/examples/pool_context
+module github.com/alitto/pond/v2/examples/pool_context
 
-go 1.18
+go 1.22
 
-require github.com/alitto/pond v1.7.1
+require github.com/alitto/pond/v2 v2.0.0
 
-replace github.com/alitto/pond => ../../
+replace github.com/alitto/pond/v2 => ../../

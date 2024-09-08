@@ -1,3 +1,3 @@
-module github.com/alitto/pond
+module github.com/alitto/pond/v2
 
-go 1.18
+go 1.22

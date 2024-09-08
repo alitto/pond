@@ -1,7 +1,6 @@
 package pond
 
 import (
-	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,7 +12,7 @@ func TestSubpool(t *testing.T) {
 	taskCount := 10
 	maxConcurrency := 5
 
-	pool := NewPool[any](context.Background(), 10)
+	pool := NewPool(10)
 	subpool := pool.Subpool(maxConcurrency)
 	subsubpool := subpool.Subpool(1)
 
@@ -64,7 +63,7 @@ func TestSubpoolStopAndWait(t *testing.T) {
 	taskCount := 100000
 	maxConcurrency := 100
 
-	subpool := NewPool[any](context.Background(), 1000).Subpool(maxConcurrency)
+	subpool := NewPool(1000).Subpool(maxConcurrency)
 
 	var executedCount atomic.Int64
 

@@ -5,7 +5,7 @@ import "context"
 // Background pool size
 const BACKGROUND_POOL_SIZE = 10000
 
-var backgroundPool = newPool[any](context.Background(), BACKGROUND_POOL_SIZE, nil)
+var backgroundPool = NewPool(BACKGROUND_POOL_SIZE)
 
 type TaskFunc[O any] interface {
 	func() | func(context.Context) | func() error | func(context.Context) error | func() O | func(context.Context) O | func() (O, error) | func(context.Context) (O, error)

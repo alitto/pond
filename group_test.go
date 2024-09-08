@@ -1,14 +1,13 @@
 package pond
 
 import (
-	"context"
 	"errors"
 	"testing"
 )
 
 func TestTaskGroupWait(t *testing.T) {
 
-	pool := NewPool[int](context.Background(), 10)
+	pool := NewTypedPool[int](10)
 
 	group := pool.Group()
 
@@ -26,7 +25,7 @@ func TestTaskGroupWait(t *testing.T) {
 
 func TestTaskGroupWaitAll(t *testing.T) {
 
-	pool := NewPool[int](context.Background(), 10)
+	pool := NewTypedPool[int](10)
 
 	group := pool.Group()
 
@@ -49,7 +48,7 @@ func TestTaskGroupWaitAll(t *testing.T) {
 
 func TestTaskGroupWithError(t *testing.T) {
 
-	pool := NewPool[int](context.Background(), 10)
+	pool := NewTypedPool[int](10)
 
 	group := pool.Group()
 	sampleErr := errors.New("sample error")

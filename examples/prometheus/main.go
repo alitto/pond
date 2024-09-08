@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/alitto/pond"
+	"github.com/alitto/pond/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -13,7 +13,7 @@ import (
 func main() {
 
 	// Create a worker pool
-	pool := pond.New(10, 100)
+	pool := pond.NewPool(10)
 
 	// Register pool metrics collectors
 
@@ -25,14 +25,6 @@ func main() {
 		},
 		func() float64 {
 			return float64(pool.RunningWorkers())
-		}))
-	prometheus.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Name: "pool_workers_idle",
-			Help: "Number of idle worker goroutines",
-		},
-		func() float64 {
-			return float64(pool.IdleWorkers())
 		}))
 
 	// Task metrics
@@ -87,7 +79,7 @@ func main() {
 
 }
 
-func submitTasks(pool *pond.WorkerPool) {
+func submitTasks(pool pond.Pool[any]) {
 
 	// Submit 1000 tasks
 	for i := 0; i < 1000; i++ {

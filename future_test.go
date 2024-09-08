@@ -26,11 +26,30 @@ func TestFutureGetWithError(t *testing.T) {
 
 	future, resolve := newFuture[int](ctx)
 
-	resolve(0, fmt.Errorf("error"))
+	simpleErr := fmt.Errorf("error")
+
+	resolve(0, simpleErr)
 
 	out, err := future.Get()
 
+	assertEqual(t, simpleErr, err)
 	assertEqual(t, "error", err.Error())
+	assertEqual(t, 0, out)
+}
+
+func TestFutureGetWithCanceledContext(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	future, resolve := newFuture[int](ctx)
+
+	cancel()
+
+	resolve(0, nil)
+
+	out, err := future.Get()
+
+	assertEqual(t, context.Canceled, err)
 	assertEqual(t, 0, out)
 }
 
@@ -60,7 +79,7 @@ func TestFutureWaitWithError(t *testing.T) {
 	assertEqual(t, "error", err.Error())
 }
 
-func TestFutureWithCanceledContext(t *testing.T) {
+func TestFutureWaitWithCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -70,15 +89,14 @@ func TestFutureWithCanceledContext(t *testing.T) {
 
 	resolve(0, nil)
 
-	out, err := future.Get()
+	err := future.Wait()
 
 	assertEqual(t, context.Canceled, err)
-	assertEqual(t, 0, out)
 }
 
 func TestMap(t *testing.T) {
 
-	pool := NewPool[int](context.Background(), 10)
+	pool := NewTypedPool[int](10)
 
 	task := pool.Submit(func() int {
 		return 2
@@ -94,7 +112,7 @@ func TestMap(t *testing.T) {
 
 func TestMapWithError(t *testing.T) {
 
-	pool := NewPool[int](context.Background(), 10)
+	pool := NewTypedPool[int](10)
 
 	task := pool.Submit(func() (int, error) {
 		return 0, fmt.Errorf("error")
@@ -106,4 +124,20 @@ func TestMapWithError(t *testing.T) {
 
 	assertEqual(t, "error", err.Error())
 	assertEqual(t, "", formatted)
+}
+
+func TestFutureResultError(t *testing.T) {
+	result := &futureResult[int]{
+		output: 0,
+		err:    fmt.Errorf("error"),
+	}
+
+	assertEqual(t, "error", result.Error())
+
+	resultOk := &futureResult[string]{
+		output: "hello",
+		err:    nil,
+	}
+
+	assertEqual(t, "result: \"hello\"", resultOk.Error())
 }
