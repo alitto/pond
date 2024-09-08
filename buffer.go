@@ -7,6 +7,9 @@ import (
 
 var ErrEOF = errors.New("EOF")
 
+// buffer implements a generic buffer that can store any type of data.
+// It is not thread-safe and should be used with a mutex.
+// It is used by LinkedBuffer to store data and is not intended to be used directly.
 type buffer[T any] struct {
 	data           []T
 	nextWriteIndex atomic.Int64
@@ -20,10 +23,12 @@ func newBuffer[T any](capacity int) *buffer[T] {
 	}
 }
 
+// Cap returns the capacity of the buffer.
 func (b *buffer[T]) Cap() int {
 	return cap(b.data)
 }
 
+// Write writes values to the buffer.
 func (b *buffer[T]) Write(values []T) (n int, err error) {
 	n = len(values)
 	writeIndex := b.nextWriteIndex.Load()
@@ -45,6 +50,9 @@ func (b *buffer[T]) Write(values []T) (n int, err error) {
 	return
 }
 
+// Read reads values from the buffer and returns the number of elements read.
+// If the buffer is empty, it returns 0 elements.
+// If the buffer has been read completely, it returns an EOF error.
 func (b *buffer[T]) Read(values []T) (n int, err error) {
 	nextWriteIndex := b.nextWriteIndex.Load()
 	n = cap(values)

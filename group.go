@@ -1,106 +1,86 @@
 package pond
 
 import (
-	"context"
 	"sync"
 )
 
-// TaskGroup represents a group of related tasks
-type TaskGroup struct {
-	pool      *WorkerPool
-	waitGroup sync.WaitGroup
+/**
+ * TaskGroup is not thread-safe
+ */
+type TaskGroup[O any] interface {
+	Add(tasks ...any)
+	Submit() Future[[]O]
+	Go()
 }
 
-// Submit adds a task to this group and sends it to the worker pool to be executed
-func (g *TaskGroup) Submit(task func()) {
-	g.waitGroup.Add(1)
-
-	g.pool.Submit(func() {
-		defer g.waitGroup.Done()
-
-		task()
-	})
+type taskGroup[O any] struct {
+	pool  *pool[O]
+	mutex sync.Mutex
+	tasks []any
 }
 
-// Wait waits until all the tasks in this group have completed
-func (g *TaskGroup) Wait() {
-
-	// Wait for all tasks to complete
-	g.waitGroup.Wait()
-}
-
-// TaskGroupWithContext represents a group of related tasks associated to a context
-type TaskGroupWithContext struct {
-	TaskGroup
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	errSync struct {
-		once  sync.Once
-		guard sync.RWMutex
-	}
-	err error
-}
-
-// Submit adds a task to this group and sends it to the worker pool to be executed
-func (g *TaskGroupWithContext) Submit(task func() error) {
-	g.waitGroup.Add(1)
-
-	g.pool.Submit(func() {
-		defer g.waitGroup.Done()
-
-		// If context has already been cancelled, skip task execution
-		select {
-		case <-g.ctx.Done():
-			return
-		default:
-		}
-
-		// don't actually ignore errors
-		err := task()
-		if err != nil {
-			g.setError(err)
-		}
-	})
-}
-
-// Wait blocks until either all the tasks submitted to this group have completed,
-// one of them returned a non-nil error or the context associated to this group
-// was canceled.
-func (g *TaskGroupWithContext) Wait() error {
-
-	// Wait for all tasks to complete
-	tasksCompleted := make(chan struct{})
-	go func() {
-		g.waitGroup.Wait()
-		tasksCompleted <- struct{}{}
-	}()
-
-	select {
-	case <-tasksCompleted:
-		// If context was provided, cancel it to signal all running tasks to stop
-		g.cancel()
-	case <-g.ctx.Done():
-		g.setError(g.ctx.Err())
+func (g *taskGroup[O]) Add(tasks ...any) {
+	for _, task := range tasks {
+		validateTask[O](task)
 	}
 
-	return g.getError()
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
+	g.tasks = append(g.tasks, tasks...)
 }
 
-func (g *TaskGroupWithContext) getError() error {
-	g.errSync.guard.RLock()
-	err := g.err
-	g.errSync.guard.RUnlock()
-	return err
+func (g *taskGroup[O]) Submit() Future[[]O] {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
+	future, resolve := newFuture[[]O](g.pool.Context())
+
+	pending := len(g.tasks)
+	outputs := make([]O, pending)
+	mutex := sync.Mutex{}
+
+	for i, task := range g.tasks {
+		index := i
+
+		g.pool.Go(func() {
+			output, err := invokeTask[O](task, future.Context())
+
+			mutex.Lock()
+			if future.Context().Err() != nil {
+				// Future has already resolved
+				mutex.Unlock()
+				return
+			}
+
+			// Save task output
+			outputs[index] = output
+
+			// Decrement pending count
+			pending--
+
+			if pending == 0 || err != nil {
+				// Once all tasks have completed or one of the returned an error, cancel the task group context
+				resolve(outputs, err)
+			}
+			mutex.Unlock()
+		})
+	}
+
+	// Reset tasks
+	g.tasks = g.tasks[:0]
+
+	return future
 }
 
-func (g *TaskGroupWithContext) setError(err error) {
-	g.errSync.once.Do(func() {
-		g.errSync.guard.Lock()
-		g.err = err
-		g.errSync.guard.Unlock()
+func (g *taskGroup[O]) Go() {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
 
-		// Cancel execution of any pending task in this group
-		g.cancel()
-	})
+	for _, task := range g.tasks {
+		g.pool.Go(task)
+	}
+
+	// Reset tasks
+	g.tasks = g.tasks[:0]
 }

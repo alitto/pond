@@ -5,23 +5,25 @@ import (
 	"sync/atomic"
 )
 
-type LinkedBuffer[T any] struct {
-	// Reader
+// linkedBuffer implements an unbounded generic buffer that can be written to and read from concurrently.
+// It is implemented using a linked list of buffers.
+type linkedBuffer[T any] struct {
+	// Reader points to the buffer that is currently being read
 	readBuffer *buffer[T]
 
-	// Writer
+	// Writer points to the buffer that is currently being written
 	writeBuffer *buffer[T]
 
 	maxCapacity int
-	writeCount  atomic.Int64
-	readCount   atomic.Int64
+	writeCount  atomic.Uint64
+	readCount   atomic.Uint64
 	mutex       sync.RWMutex
 }
 
-func newLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
+func newLinkedBuffer[T any](initialCapacity, maxCapacity int) *linkedBuffer[T] {
 	initialBuffer := newBuffer[T](initialCapacity)
 
-	buffer := &LinkedBuffer[T]{
+	buffer := &linkedBuffer[T]{
 		readBuffer:  initialBuffer,
 		writeBuffer: initialBuffer,
 		maxCapacity: maxCapacity,
@@ -30,11 +32,8 @@ func newLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
 	return buffer
 }
 
-func NewLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
-	return newLinkedBuffer[T](initialCapacity, maxCapacity)
-}
-
-func (b *LinkedBuffer[T]) Write(values []T) {
+// Write writes values to the buffer
+func (b *linkedBuffer[T]) Write(values []T) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -74,10 +73,11 @@ func (b *LinkedBuffer[T]) Write(values []T) {
 	}
 
 	// Increment written count
-	b.writeCount.Add(int64(length))
+	b.writeCount.Add(uint64(length))
 }
 
-func (b *LinkedBuffer[T]) Read(values []T) int {
+// Read reads values from the buffer and returns the number of elements read
+func (b *linkedBuffer[T]) Read(values []T) int {
 
 	var readBuffer *buffer[T]
 
@@ -105,22 +105,31 @@ func (b *LinkedBuffer[T]) Read(values []T) int {
 
 		if n > 0 {
 			// Increment read count
-			b.readCount.Add(int64(n))
+			b.readCount.Add(uint64(n))
 		}
 
 		return n
 	}
 }
 
-func (b *LinkedBuffer[T]) WriteCount() int64 {
+// WriteCount returns the number of elements written to the buffer since it was created
+func (b *linkedBuffer[T]) WriteCount() uint64 {
 	return b.writeCount.Load()
 }
 
-func (b *LinkedBuffer[T]) ReadCount() int64 {
+// ReadCount returns the number of elements read from the buffer since it was created
+func (b *linkedBuffer[T]) ReadCount() uint64 {
 	return b.readCount.Load()
 }
 
-// Len returns the number of elements in the buffer that haven't been read
-func (b *LinkedBuffer[T]) Len() int64 {
-	return b.writeCount.Load() - b.readCount.Load()
+// Len returns the number of elements in the buffer that haven't yet been read
+func (b *linkedBuffer[T]) Len() uint64 {
+	writeCount := b.writeCount.Load()
+	readCount := b.readCount.Load()
+
+	if writeCount < readCount {
+		return 0 // Make sure we don't return a negative value
+	}
+
+	return writeCount - readCount
 }
