@@ -6,14 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-)
 
-func assertEqual(t *testing.T, expected interface{}, actual interface{}) {
-	if expected != actual {
-		t.Helper()
-		t.Errorf("Expected %T(%v) but was %T(%v)", expected, expected, actual, actual)
-	}
-}
+	"github.com/alitto/pond/v2/internal/assert"
+)
 
 func TestPoolSubmit(t *testing.T) {
 
@@ -31,7 +26,7 @@ func TestPoolSubmit(t *testing.T) {
 
 	pool.Stop().Wait()
 
-	assertEqual(t, int64(taskCount), executedCount.Load())
+	assert.Equal(t, int64(taskCount), executedCount.Load())
 }
 
 func TestTypedPoolSubmitAndGet(t *testing.T) {
@@ -43,10 +38,10 @@ func TestTypedPoolSubmitAndGet(t *testing.T) {
 		return 5
 	})
 
-	out, err := task.Get()
+	output, err := task.Get()
 
-	assertEqual(t, nil, err)
-	assertEqual(t, 5, out)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 5, output)
 }
 
 func TestTypedPoolSubmitTaskWithPanic(t *testing.T) {
@@ -57,11 +52,11 @@ func TestTypedPoolSubmitTaskWithPanic(t *testing.T) {
 		panic("dummy panic")
 	})
 
-	out, err := task.Get()
+	output, err := task.Get()
 
-	assertEqual(t, true, errors.Is(err, ErrPanic))
-	assertEqual(t, "task panicked: dummy panic", err.Error())
-	assertEqual(t, 0, out)
+	assert.True(t, errors.Is(err, ErrPanic))
+	assert.Equal(t, "task panicked: dummy panic", err.Error())
+	assert.Equal(t, 0, output)
 }
 
 func TestPoolGo(t *testing.T) {
@@ -75,7 +70,7 @@ func TestPoolGo(t *testing.T) {
 
 	pool.Stop().Wait()
 
-	assertEqual(t, 3, <-done)
+	assert.Equal(t, 3, <-done)
 }
 
 func TestPoolWithContextCanceled(t *testing.T) {
@@ -84,8 +79,8 @@ func TestPoolWithContextCanceled(t *testing.T) {
 
 	pool := NewPool(10, WithContext(ctx))
 
-	assertEqual(t, int64(0), pool.RunningWorkers())
-	assertEqual(t, uint64(0), pool.SubmittedTasks())
+	assert.Equal(t, int64(0), pool.RunningWorkers())
+	assert.Equal(t, uint64(0), pool.SubmittedTasks())
 
 	var taskCount int = 10000
 	var executedCount atomic.Int64
@@ -97,8 +92,8 @@ func TestPoolWithContextCanceled(t *testing.T) {
 		})
 	}
 
-	assertEqual(t, int64(10), pool.RunningWorkers())
-	assertEqual(t, uint64(taskCount), pool.SubmittedTasks())
+	assert.Equal(t, int64(10), pool.RunningWorkers())
+	assert.Equal(t, uint64(taskCount), pool.SubmittedTasks())
 
 	// Cancel the context after 5ms
 	time.Sleep(5 * time.Millisecond)
@@ -106,7 +101,7 @@ func TestPoolWithContextCanceled(t *testing.T) {
 
 	pool.Stop().Wait()
 
-	assertEqual(t, true, executedCount.Load() < int64(taskCount))
+	assert.True(t, executedCount.Load() < int64(taskCount))
 }
 
 func TestPoolMetrics(t *testing.T) {
@@ -114,12 +109,12 @@ func TestPoolMetrics(t *testing.T) {
 	pool := NewPool(100)
 
 	// Assert counters
-	assertEqual(t, int64(0), pool.RunningWorkers())
-	assertEqual(t, uint64(0), pool.SubmittedTasks())
-	assertEqual(t, uint64(0), pool.CompletedTasks())
-	assertEqual(t, uint64(0), pool.FailedTasks())
-	assertEqual(t, uint64(0), pool.SuccessfulTasks())
-	assertEqual(t, uint64(0), pool.WaitingTasks())
+	assert.Equal(t, int64(0), pool.RunningWorkers())
+	assert.Equal(t, uint64(0), pool.SubmittedTasks())
+	assert.Equal(t, uint64(0), pool.CompletedTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+	assert.Equal(t, uint64(0), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
 
 	var taskCount int = 10000
 	var executedCount atomic.Int64
@@ -137,10 +132,10 @@ func TestPoolMetrics(t *testing.T) {
 
 	pool.Stop().Wait()
 
-	assertEqual(t, int64(taskCount), executedCount.Load())
-	assertEqual(t, int64(0), pool.RunningWorkers())
-	assertEqual(t, uint64(taskCount), pool.SubmittedTasks())
-	assertEqual(t, uint64(taskCount), pool.CompletedTasks())
-	assertEqual(t, uint64(taskCount/2), pool.FailedTasks())
-	assertEqual(t, uint64(taskCount/2), pool.SuccessfulTasks())
+	assert.Equal(t, int64(taskCount), executedCount.Load())
+	assert.Equal(t, int64(0), pool.RunningWorkers())
+	assert.Equal(t, uint64(taskCount), pool.SubmittedTasks())
+	assert.Equal(t, uint64(taskCount), pool.CompletedTasks())
+	assert.Equal(t, uint64(taskCount/2), pool.FailedTasks())
+	assert.Equal(t, uint64(taskCount/2), pool.SuccessfulTasks())
 }

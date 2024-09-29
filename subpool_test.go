@@ -1,10 +1,13 @@
 package pond
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/alitto/pond/v2/internal/assert"
 )
 
 func TestSubpool(t *testing.T) {
@@ -54,8 +57,8 @@ func TestSubpool(t *testing.T) {
 	<-completed
 	<-completed
 
-	assertEqual(t, true, subpoolElapsedTime >= time.Duration(taskCount/maxConcurrency)*taskDuration)
-	assertEqual(t, true, subsubpoolElapsedTime >= time.Duration(taskCount/1)*taskDuration)
+	assert.True(t, subpoolElapsedTime >= time.Duration(taskCount/maxConcurrency)*taskDuration)
+	assert.True(t, subsubpoolElapsedTime >= time.Duration(taskCount/1)*taskDuration)
 }
 
 func TestSubpoolStopAndWait(t *testing.T) {
@@ -76,5 +79,48 @@ func TestSubpoolStopAndWait(t *testing.T) {
 
 	subpool.Stop().Wait()
 
-	assertEqual(t, int64(taskCount), executedCount.Load())
+	assert.Equal(t, int64(taskCount), executedCount.Load())
+}
+
+func TestSubpoolMetrics(t *testing.T) {
+	pool := NewPool(10)
+	subpool := pool.Subpool(5)
+
+	sampleErr := errors.New("sample error")
+
+	for i := 0; i < 20; i++ {
+		if i%2 == 0 {
+			subpool.Submit(func() error {
+				if i%4 == 0 {
+					return sampleErr
+				}
+
+				return nil
+			})
+		} else {
+			pool.Submit(func() error {
+				if i%3 == 0 {
+					return sampleErr
+				}
+
+				return nil
+			})
+		}
+	}
+
+	subpool.StopAndWait()
+	pool.StopAndWait()
+
+	assert.Equal(t, uint64(20), pool.SubmittedTasks())
+	assert.Equal(t, uint64(20), pool.CompletedTasks())
+	assert.Equal(t, uint64(3), pool.FailedTasks())
+	assert.Equal(t, uint64(17), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+
+	assert.Equal(t, uint64(10), subpool.SubmittedTasks())
+	assert.Equal(t, uint64(10), subpool.CompletedTasks())
+	assert.Equal(t, uint64(5), subpool.FailedTasks())
+	assert.Equal(t, uint64(5), subpool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), subpool.WaitingTasks())
+
 }

@@ -1,18 +1,18 @@
-package pond
+package linkedbuffer
 
 import (
 	"sync"
 	"sync/atomic"
 )
 
-// linkedBuffer implements an unbounded generic buffer that can be written to and read from concurrently.
+// LinkedBuffer implements an unbounded generic buffer that can be written to and read from concurrently.
 // It is implemented using a linked list of buffers.
-type linkedBuffer[T any] struct {
+type LinkedBuffer[T any] struct {
 	// Reader points to the buffer that is currently being read
-	readBuffer *buffer[T]
+	readBuffer *Buffer[T]
 
 	// Writer points to the buffer that is currently being written
-	writeBuffer *buffer[T]
+	writeBuffer *Buffer[T]
 
 	maxCapacity int
 	writeCount  atomic.Uint64
@@ -20,10 +20,10 @@ type linkedBuffer[T any] struct {
 	mutex       sync.RWMutex
 }
 
-func newLinkedBuffer[T any](initialCapacity, maxCapacity int) *linkedBuffer[T] {
-	initialBuffer := newBuffer[T](initialCapacity)
+func NewLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
+	initialBuffer := NewBuffer[T](initialCapacity)
 
-	buffer := &linkedBuffer[T]{
+	buffer := &LinkedBuffer[T]{
 		readBuffer:  initialBuffer,
 		writeBuffer: initialBuffer,
 		maxCapacity: maxCapacity,
@@ -33,7 +33,7 @@ func newLinkedBuffer[T any](initialCapacity, maxCapacity int) *linkedBuffer[T] {
 }
 
 // Write writes values to the buffer
-func (b *linkedBuffer[T]) Write(values []T) {
+func (b *LinkedBuffer[T]) Write(values []T) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -59,7 +59,7 @@ func (b *linkedBuffer[T]) Write(values []T) {
 			}
 
 			if b.writeBuffer.next == nil {
-				b.writeBuffer.next = newBuffer[T](newCapacity)
+				b.writeBuffer.next = NewBuffer[T](newCapacity)
 				b.writeBuffer = b.writeBuffer.next
 			}
 			continue
@@ -77,9 +77,9 @@ func (b *linkedBuffer[T]) Write(values []T) {
 }
 
 // Read reads values from the buffer and returns the number of elements read
-func (b *linkedBuffer[T]) Read(values []T) int {
+func (b *LinkedBuffer[T]) Read(values []T) int {
 
-	var readBuffer *buffer[T]
+	var readBuffer *Buffer[T]
 
 	for {
 		b.mutex.RLock()
@@ -113,17 +113,17 @@ func (b *linkedBuffer[T]) Read(values []T) int {
 }
 
 // WriteCount returns the number of elements written to the buffer since it was created
-func (b *linkedBuffer[T]) WriteCount() uint64 {
+func (b *LinkedBuffer[T]) WriteCount() uint64 {
 	return b.writeCount.Load()
 }
 
 // ReadCount returns the number of elements read from the buffer since it was created
-func (b *linkedBuffer[T]) ReadCount() uint64 {
+func (b *LinkedBuffer[T]) ReadCount() uint64 {
 	return b.readCount.Load()
 }
 
 // Len returns the number of elements in the buffer that haven't yet been read
-func (b *linkedBuffer[T]) Len() uint64 {
+func (b *LinkedBuffer[T]) Len() uint64 {
 	writeCount := b.writeCount.Load()
 	readCount := b.readCount.Load()
 

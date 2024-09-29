@@ -1,17 +1,19 @@
-package pond
+package linkedbuffer
 
 import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/alitto/pond/v2/internal/assert"
 )
 
 func TestLinkedBuffer(t *testing.T) {
-	buf := newLinkedBuffer[int](10, 1024)
+	buf := NewLinkedBuffer[int](10, 1024)
 
-	assertEqual(t, uint64(0), buf.Len())
-	assertEqual(t, uint64(0), buf.WriteCount())
-	assertEqual(t, uint64(0), buf.ReadCount())
+	assert.Equal(t, uint64(0), buf.Len())
+	assert.Equal(t, uint64(0), buf.WriteCount())
+	assert.Equal(t, uint64(0), buf.ReadCount())
 
 	writeCount := 1000
 	writers := 100
@@ -37,7 +39,7 @@ func TestLinkedBuffer(t *testing.T) {
 
 	writersWg.Wait()
 
-	assertEqual(t, uint64(writers*writeCount), buf.Len())
+	assert.Equal(t, uint64(writers*writeCount), buf.Len())
 
 	for i := 0; i < readers; i++ {
 		go func() {
@@ -62,30 +64,30 @@ func TestLinkedBuffer(t *testing.T) {
 
 	readersWg.Wait()
 
-	assertEqual(t, uint64(writers*writeCount), readCount.Load())
+	assert.Equal(t, uint64(writers*writeCount), readCount.Load())
 }
 
 func TestLinkedBufferLen(t *testing.T) {
-	buf := newLinkedBuffer[int](10, 1024)
+	buf := NewLinkedBuffer[int](10, 1024)
 
-	assertEqual(t, uint64(0), buf.Len())
+	assert.Equal(t, uint64(0), buf.Len())
 
 	buf.Write([]int{1, 2, 3, 4, 5})
 
-	assertEqual(t, uint64(5), buf.Len())
+	assert.Equal(t, uint64(5), buf.Len())
 
 	buf.Write([]int{6, 7, 8, 9, 10})
 
-	assertEqual(t, uint64(10), buf.Len())
+	assert.Equal(t, uint64(10), buf.Len())
 
 	buf.Read(make([]int, 5))
 
-	assertEqual(t, uint64(5), buf.Len())
+	assert.Equal(t, uint64(5), buf.Len())
 
 	buf.Read(make([]int, 5))
 
-	assertEqual(t, uint64(0), buf.Len())
+	assert.Equal(t, uint64(0), buf.Len())
 
 	buf.readCount.Add(1)
-	assertEqual(t, uint64(0), buf.Len())
+	assert.Equal(t, uint64(0), buf.Len())
 }
