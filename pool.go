@@ -4,15 +4,26 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+
+	"github.com/alitto/pond/v2/internal/dispatcher"
+	"github.com/alitto/pond/v2/internal/future"
 )
 
 const DEFAULT_TASKS_CHAN_LENGTH = 2048
+
+// TaskRunner
+type TaskRunner interface {
+	// Runs the task
+	Go(task any)
+}
 
 /**
  * Interface implemented by all worker pools in this library.
  * @param O The type of the output of the tasks submitted to the pool
  */
 type Pool[O any] interface {
+	TaskRunner
+
 	// Returns the number of worker goroutines that are currently active (executing a task) in the pool.
 	RunningWorkers() int64
 
@@ -37,9 +48,6 @@ type Pool[O any] interface {
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
 	Submit(task any) Future[O]
 
-	// Submits a task to the pool without waiting for it to complete.
-	Go(task any)
-
 	// Stops the pool and returns a future that can be used to wait for all tasks pending to complete.
 	Stop() Future[struct{}]
 
@@ -61,11 +69,11 @@ type pool[O any] struct {
 	tasksLen            int
 	workerCount         atomic.Int64
 	workerWaitGroup     sync.WaitGroup
-	dispatcher          *dispatcher[any]
+	dispatcher          *dispatcher.Dispatcher[any]
 	successfulTaskCount atomic.Uint64
 	failedTaskCount     atomic.Uint64
 	// Subpool properties
-	parent    *pool[O]
+	parent    TaskRunner
 	waitGroup sync.WaitGroup
 	sem       chan struct{}
 }
@@ -101,36 +109,33 @@ func (p *pool[O]) CompletedTasks() uint64 {
 func (p *pool[O]) Go(task any) {
 	validateTask[O](task)
 
-	p.dispatcher.Write(task)
+	wrapped := wrapTask(task, p.updateMetrics)
+
+	p.dispatcher.Write(wrapped.Run)
 }
 
 func (p *pool[O]) Submit(task any) Future[O] {
 	validateTask[O](task)
 
-	future, resolve := newFuture[O](p.Context())
+	future, resolve := future.NewFuture[O](p.Context())
 
-	futureTask := futureTask[O]{
-		task: task,
-		ctx:  future.Context(),
-		resolve: func(output O, err error) {
-			resolve(output, err)
+	wrapped := wrapTask(task, resolve, p.updateMetrics)
 
-			// Update counters
-			if err != nil {
-				p.failedTaskCount.Add(1)
-			} else {
-				p.successfulTaskCount.Add(1)
-			}
-		},
-	}
-
-	p.dispatcher.Write(futureTask.Run)
+	p.dispatcher.Write(wrapped.Run)
 
 	return future
 }
 
+func (p *pool[O]) updateMetrics(_ O, err error) {
+	if err != nil {
+		p.failedTaskCount.Add(1)
+	} else {
+		p.successfulTaskCount.Add(1)
+	}
+}
+
 func (p *pool[O]) Stop() Future[struct{}] {
-	return Submit[struct{}](func() {
+	return TypedSubmit[struct{}](func() {
 		p.dispatcher.CloseAndWait()
 
 		p.waitGroup.Wait()
@@ -160,13 +165,11 @@ func (p *pool[O]) Subpool(maxConcurrency int, options ...PoolOption) Pool[O] {
 		option(opts)
 	}
 
-	return newPool(maxConcurrency, opts, p)
+	return newPool[O](maxConcurrency, opts, p)
 }
 
 func (p *pool[O]) Group() TaskGroup[O] {
-	return &taskGroup[O]{
-		pool: p,
-	}
+	return newTaskGroup[O](p.Context(), p)
 }
 
 func (p *pool[O]) dispatch(incomingTasks []any) {
@@ -274,7 +277,7 @@ func (p *pool[O]) worker() {
 	}
 }
 
-func newPool[O any](maxConcurrency int, options *PoolOptions, parent *pool[O]) Pool[O] {
+func newPool[O any](maxConcurrency int, options *PoolOptions, parent TaskRunner) Pool[O] {
 
 	if maxConcurrency <= 0 {
 		panic("maxConcurrency must be greater than 0")
@@ -300,9 +303,9 @@ func newPool[O any](maxConcurrency int, options *PoolOptions, parent *pool[O]) P
 	if parent != nil {
 		// Subpool
 		pool.sem = make(chan struct{}, maxConcurrency)
-		pool.dispatcher = newDispatcher(options.Context, pool.subpoolDispatch, tasksLen)
+		pool.dispatcher = dispatcher.NewDispatcher(options.Context, pool.subpoolDispatch, tasksLen)
 	} else {
-		pool.dispatcher = newDispatcher(options.Context, pool.dispatch, tasksLen)
+		pool.dispatcher = dispatcher.NewDispatcher(options.Context, pool.dispatch, tasksLen)
 	}
 
 	return pool

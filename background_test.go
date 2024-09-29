@@ -3,29 +3,31 @@ package pond
 import (
 	"errors"
 	"testing"
+
+	"github.com/alitto/pond/v2/internal/assert"
 )
 
-func TestSubmit(t *testing.T) {
+func TestSubmitTyped(t *testing.T) {
 
-	task := Submit[int](func() int {
+	task := TypedSubmit[int](func() int {
 		return 10
 	})
 
-	out, err := task.Get()
+	output, err := task.Get()
 
-	assertEqual(t, nil, err)
-	assertEqual(t, 10, out)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 10, output)
 }
 
-func TestSubmitWithPanic(t *testing.T) {
+func TestSubmitTypedWithPanic(t *testing.T) {
 
-	task := Submit[int](func() int {
+	task := TypedSubmit[int](func() int {
 		panic("dummy panic")
 	})
 
-	out, err := task.Get()
+	output, err := task.Get()
 
-	assertEqual(t, true, errors.Is(err, ErrPanic))
-	assertEqual(t, "task panicked: dummy panic", err.Error())
-	assertEqual(t, 0, out)
+	assert.True(t, errors.Is(err, ErrPanic))
+	assert.Equal(t, "task panicked: dummy panic", err.Error())
+	assert.Equal(t, 0, output)
 }

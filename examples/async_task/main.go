@@ -11,7 +11,7 @@ import (
 func main() {
 
 	// Submit a sample task that runs asynchronously in the worker pool and returns a string
-	task := pond.Submit[time.Duration](func() time.Duration {
+	task := pond.SubmitTyped[time.Duration](func() time.Duration {
 		sleepTime := time.Duration(1+rand.IntN(3)) * time.Second
 		time.Sleep(time.Duration(sleepTime))
 		return sleepTime

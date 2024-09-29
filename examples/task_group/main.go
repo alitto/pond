@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,12 +10,8 @@ import (
 
 func main() {
 
-	// Create a worker pool
-	pool := pond.NewTypedPool[string](1000)
-	defer pool.Stop()
-
 	// Create a task group
-	group := pool.Group()
+	group := pond.TypedGroup[string]()
 
 	var urls = []string{
 		"https://jsonplaceholder.typicode.com/todos/1",
@@ -24,18 +19,12 @@ func main() {
 		"https://jsonplaceholder.typicode.com/todos/3",
 	}
 
-	ctx := context.Background()
-
 	// Submit tasks to fetch the contents of each URL
 	for _, url := range urls {
 		url := url
 		group.Add(func() (string, error) {
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-			if err != nil {
-				return "", err
-			}
-
-			resp, err := http.DefaultClient.Do(req)
+			// Fetch the URL
+			resp, err := http.Get(url)
 			if err != nil {
 				return "", err
 			}
@@ -52,7 +41,7 @@ func main() {
 	}
 
 	// Wait for all HTTP requests to complete.
-	responseBodies, err := group.Submit().Get()
+	responseBodies, err := group.Get()
 
 	if err != nil {
 		fmt.Printf("Failed to fetch URLs: %v", err)

@@ -5,21 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/alitto/pond/v2/internal/future"
 )
 
 var ErrPanic = errors.New("task panicked")
-
-type futureTask[O any] struct {
-	task    any
-	ctx     context.Context
-	resolve func(O, error)
-}
-
-func (t futureTask[O]) Run() {
-	output, err := invokeTask[O](t.task, t.ctx)
-
-	t.resolve(output, err)
-}
 
 type subpoolTask[O any] struct {
 	task      any
@@ -36,6 +26,30 @@ func (t subpoolTask[O]) Run(ctx context.Context) {
 	}()
 
 	invokeTask[O](t.task, ctx)
+}
+
+type wrappedTask[O any] struct {
+	task      any
+	callbacks []func(O, error)
+}
+
+func (t wrappedTask[O]) Run(ctx context.Context) {
+	output, err := invokeTask[O](t.task, ctx)
+
+	if t.callbacks == nil {
+		return
+	}
+
+	for _, callback := range t.callbacks {
+		callback(output, err)
+	}
+}
+
+func wrapTask[O any](task any, callbacks ...func(O, error)) *wrappedTask[O] {
+	return &wrappedTask[O]{
+		task:      task,
+		callbacks: callbacks,
+	}
 }
 
 func validateTask[O any](task any) {
@@ -91,4 +105,15 @@ func invokeTask[O any](task any, ctx context.Context) (output O, err error) {
 		panic(fmt.Sprintf("unsupported task type: %#v", task))
 	}
 	return
+}
+
+func submitTyped[O any](task any, ctx context.Context, runner TaskRunner) Future[O] {
+
+	future, resolve := future.NewFuture[O](ctx)
+
+	futureTask := wrapTask(task, resolve)
+
+	runner.Go(futureTask.Run)
+
+	return future
 }

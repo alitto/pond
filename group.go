@@ -1,22 +1,30 @@
 package pond
 
 import (
+	"context"
 	"sync"
+
+	"github.com/alitto/pond/v2/internal/future"
 )
 
 /**
- * TaskGroup is not thread-safe
+ * TaskGroup is a collection of tasks that can be submitted to a pool.
+ * The tasks are executed concurrently and the results are collected in the order they are received.
  */
 type TaskGroup[O any] interface {
 	Add(tasks ...any)
-	Submit() Future[[]O]
+	Get() ([]O, error)
+	Wait() error
+	GetAll() ([]*Result[O], error)
+	WaitAll() error
 	Go()
 }
 
 type taskGroup[O any] struct {
-	pool  *pool[O]
-	mutex sync.Mutex
-	tasks []any
+	ctx    context.Context
+	runner TaskRunner
+	mutex  sync.Mutex
+	tasks  []any
 }
 
 func (g *taskGroup[O]) Add(tasks ...any) {
@@ -30,40 +38,58 @@ func (g *taskGroup[O]) Add(tasks ...any) {
 	g.tasks = append(g.tasks, tasks...)
 }
 
-func (g *taskGroup[O]) Submit() Future[[]O] {
+func (g *taskGroup[O]) Get() ([]O, error) {
+	return g.submit().Get()
+}
+
+func (g *taskGroup[O]) Wait() error {
+	return g.submit().Wait()
+}
+
+func (g *taskGroup[O]) GetAll() ([]*Result[O], error) {
+	return g.submitAll().Get()
+}
+
+func (g *taskGroup[O]) WaitAll() error {
+	return g.submitAll().Wait()
+}
+
+func (g *taskGroup[O]) submit() Future[[]O] {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	future, resolve := newFuture[[]O](g.pool.Context())
-
-	pending := len(g.tasks)
-	outputs := make([]O, pending)
-	mutex := sync.Mutex{}
+	future, resolve := future.NewCompositeFuture[O](g.ctx, len(g.tasks))
 
 	for i, task := range g.tasks {
 		index := i
-
-		g.pool.Go(func() {
+		g.runner.Go(func() {
 			output, err := invokeTask[O](task, future.Context())
 
-			mutex.Lock()
-			if future.Context().Err() != nil {
-				// Future has already resolved
-				mutex.Unlock()
-				return
-			}
+			resolve(index, output, err)
+		})
+	}
 
-			// Save task output
-			outputs[index] = output
+	// Reset tasks
+	g.tasks = g.tasks[:0]
 
-			// Decrement pending count
-			pending--
+	return future
+}
 
-			if pending == 0 || err != nil {
-				// Once all tasks have completed or one of the returned an error, cancel the task group context
-				resolve(outputs, err)
-			}
-			mutex.Unlock()
+func (g *taskGroup[O]) submitAll() Future[[]*Result[O]] {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
+	future, resolve := future.NewCompositeFuture[*Result[O]](g.ctx, len(g.tasks))
+
+	for i, task := range g.tasks {
+		index := i
+		g.runner.Go(func() {
+			output, err := invokeTask[O](task, future.Context())
+
+			resolve(index, &Result[O]{
+				Output: output,
+				Err:    err,
+			}, nil)
 		})
 	}
 
@@ -78,9 +104,16 @@ func (g *taskGroup[O]) Go() {
 	defer g.mutex.Unlock()
 
 	for _, task := range g.tasks {
-		g.pool.Go(task)
+		g.runner.Go(task)
 	}
 
 	// Reset tasks
 	g.tasks = g.tasks[:0]
+}
+
+func newTaskGroup[O any](ctx context.Context, pool TaskRunner) *taskGroup[O] {
+	return &taskGroup[O]{
+		ctx:    ctx,
+		runner: pool,
+	}
 }
