@@ -10,8 +10,10 @@ import (
 
 func main() {
 
+	pool := pond.WithOutput[time.Duration]()
+
 	// Submit a sample task that runs asynchronously in the worker pool and returns a string
-	task := pond.SubmitTyped[time.Duration](func() time.Duration {
+	task := pool.Submit(func() time.Duration {
 		sleepTime := time.Duration(1+rand.IntN(3)) * time.Second
 		time.Sleep(time.Duration(sleepTime))
 		return sleepTime

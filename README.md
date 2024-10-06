@@ -1,51 +1,53 @@
-<a title="Codecov" target="_blank" href="https://github.com/alitto/pond/actions"><img alt="Build status" src="https://github.com/alitto/pond/actions/workflows/main.yml/badge.svg?branch=master&event=push"/></a>
-<a title="Codecov" target="_blank" href="https://codecov.io/gh/alitto/pond"><img src="https://codecov.io/gh/alitto/pond/branch/master/graph/badge.svg"/></a>
+<a title="Codecov" target="_blank" href="https://github.com/alitto/pond/actions"><img alt="Build status" src="https://github.com/alitto/pond/actions/workflows/main.yml/badge.svg?branch=main&event=push"/></a>
+<a title="Codecov" target="_blank" href="https://codecov.io/gh/alitto/pond"><img src="https://codecov.io/gh/alitto/pond/branch/main/graph/badge.svg"/></a>
 <a title="Release" target="_blank" href="https://github.com/alitto/pond/releases"><img src="https://img.shields.io/github/v/release/alitto/pond"/></a>
 <a title="Go Report Card" target="_blank" href="https://goreportcard.com/report/github.com/alitto/pond"><img src="https://goreportcard.com/badge/github.com/alitto/pond"/></a>
 
 # pond
-Minimalistic and High-performance goroutine worker pool written in Go
+A minimalistic and high-performance Go library designed to elegantly manage concurrent tasks.
 
 ## Motivation
 
-This library is meant to provide a simple way to limit concurrency when executing some function over a limited resource or service.
+This library is meant to provide a simple and idiomatic way to manage concurrency in golang programs. Based on the [Worker Pool pattern](https://en.wikipedia.org/wiki/Thread_pool), it allows you to limit the number of goroutines running concurrently and queue tasks when the pool is full. This is useful when you need to limit the number of concurrent operations to avoid resource exhaustion or rate limiting.  
 
-Some common scenarios include:
-
- - Executing queries against a Database with a limited no. of connections
- - Sending HTTP requests to a a rate/concurrency limited API
+Some common use cases include:
+ - Processing a large number of tasks concurrently
+ - Limiting the number of concurrent HTTP requests
+ - Limiting the number of concurrent database connections
+ - Sending HTTP requests to a rate-limited API
 
 ## Features:
 
 - Zero dependencies
-- Create pools with fixed or dynamic size
-- Worker goroutines are only created when needed (backpressure detection) and automatically purged after being idle for some time (configurable)
-- Minimalistic APIs for:
-  - Creating worker pools with fixed or dynamic size
+- Create pools with maximum number of workers
+- Worker goroutines are only created when needed and immediately removed when idle (scale to zero by default)
+- Minimalistic and fluent APIs for:
+  - Creating worker pools with maximum number of workers
   - Submitting tasks to a pool in a fire-and-forget fashion
   - Submitting tasks to a pool and waiting for them to complete
-  - Submitting tasks to a pool with a deadline
-  - Submitting a group of tasks and waiting for them to complete
-  - Submitting a group of tasks associated to a Context
-  - Getting the number of running workers (goroutines)
+  - Submitting a group of tasks and waiting for them to complete or the first error to occur
+  - Submitting a group of tasks and waiting for all of them to complete successfully or with an error 
   - Stopping a worker pool
-- Task panics are handled gracefully (configurable panic handler)
-- Supports Non-blocking and Blocking task submission modes (buffered / unbuffered)
-- Very high performance and efficient resource usage under heavy workloads, even outperforming unbounded goroutines in some scenarios (See [benchmarks](https://github.com/alitto/pond-benchmarks))
-- Configurable pool resizing strategy, with 3 presets for common scenarios: Eager, Balanced and Lazy. 
-- Complete pool metrics such as number of running workers, tasks waiting in the queue [and more](#metrics--monitoring).
-- **New (since v1.7.0)**: configurable parent context and graceful shutdown with deadline.
+  - Monitoring pool metrics such as number of running workers, tasks waiting in the queue, etc.
+- Very high performance and efficient resource usage under heavy workloads, even outperforming unbounded goroutines in some scenarios
+- Complete pool metrics such as number of running workers, tasks waiting in the queue [and more](#metrics--monitoring)
+- Configurable parent context to stop all workers when it is cancelled
+- **New features in v2**:
+  - Unbounded task queues
+  - Submission of typed tasks that return a value or an error
+  - Awaitable task completion
+  - Task panics are returned as errors
 - [API reference](https://pkg.go.dev/github.com/alitto/pond)
 
-## How to install
+## Installation
 
 ```bash
-go get -u github.com/alitto/pond
+go get -u github.com/alitto/pond/v2
 ```
 
-## How to use
+## Usage
 
-### Worker pool with dynamic size
+### Submitting tasks to a pool with limited concurrency (maximum number of workers)
 
 ``` go
 package main
@@ -53,14 +55,13 @@ package main
 import (
 	"fmt"
 
-	"github.com/alitto/pond"
+	"github.com/alitto/pond/v2"
 )
 
 func main() {
 
-	// Create a buffered (non-blocking) pool that can scale up to 100 workers
-	// and has a buffer capacity of 1000 tasks
-	pool := pond.New(100, 1000)
+	// Create a pool that can scale up to 100 workers
+	pool := pond.NewPool(100)
 
 	// Submit 1000 tasks
 	for i := 0; i < 1000; i++ {
@@ -75,72 +76,99 @@ func main() {
 }
 ```
 
-### Worker pool with fixed size
+### Submitting tasks that return a value
+
+This feature allows you to submit tasks that return a value. This is useful when you need to process the result of a task.
 
 ``` go
-package main
+// Create a pool that can scale up to 10 workers and accepts tasks that return a string or an error
+pool := pond.WithOutput[string]().NewPool(10)
 
-import (
-	"fmt"
+// Submit a task that returns a string value or an error
+task := pool.Submit(func() (string) {
+	return "Hello, World!"
+})
 
-	"github.com/alitto/pond"
-)
+// Wait for the task to complete and get the result
+result, err := task.Get()
 
-func main() {
-
-	// Create an unbuffered (blocking) pool with a fixed 
-	// number of workers
-	pool := pond.New(10, 0, pond.MinWorkers(10))
-
-	// Submit 1000 tasks
-	for i := 0; i < 1000; i++ {
-		n := i
-		pool.Submit(func() {
-			fmt.Printf("Running task #%d\n", n)
-		})
-	}
-
-	// Stop the pool and wait for all submitted tasks to complete
-	pool.StopAndWait()
+if err != nil {
+	fmt.Printf("Failed to run task: %v", err)
+} else {
+	fmt.Printf("Task result: %v", result)
 }
 ```
 
-### Submitting a group of tasks
+### Submitting tasks that return a value or an error
+
+This feature allows you to submit tasks that return a value or an error. This is useful when you need to handle errors that occur during the execution of a task.
 
 ``` go
-package main
+// Create a pool that can scale up to 10 workers and accepts tasks that return a string or an error
+pool := pond.WithOutput[string]().NewPool(10)
 
-import (
-	"fmt"
+// Submit a task that returns a string value or an error
+task := pool.SubmitErr(func() (string, error) {
+	return "Hello, World!", nil
+})
 
-	"github.com/alitto/pond"
-)
+// Wait for the task to complete and get the result
+result, err := task.Get()
 
-func main() {
-
-	// Create a pool
-	pool := pond.New(10, 1000)
-	defer pool.StopAndWait()
-
-	// Create a task group
-	group := pool.Group()
-
-	// Submit a group of tasks
-	for i := 0; i < 20; i++ {
-		n := i
-		group.Submit(func() {
-			fmt.Printf("Running group task #%d\n", n)
-		})
-	}
-
-	// Wait for all tasks in the group to complete
-	group.Wait()
+if err != nil {
+	fmt.Printf("Failed to run task: %v", err)
+} else {
+	fmt.Printf("Task result: %v", result)
 }
 ```
 
-### Submitting a group of tasks associated to a context (**since v1.8.0**)
+### Submitting a group of related tasks
 
-This feature provides synchronization, error propagation, and Context cancelation for subtasks of a common task. Similar to `errgroup.Group` from [`golang.org/x/sync/errgroup`](https://pkg.go.dev/golang.org/x/sync/errgroup) package with concurrency bounded by the worker pool.
+``` go
+// Create a pool that can scale up to 10 workers
+pool := pond.NewPool(10)
+
+// Create a task group
+group := pool.Group()
+
+// Submit a group of tasks
+for i := 0; i < 20; i++ {
+	n := i
+	group.Submit(func() {
+		fmt.Printf("Running group task #%d\n", n)
+	})
+}
+
+// Wait for all tasks in the group to complete or the first error to occur
+err := group.Wait()
+if err != nil {
+	fmt.Printf("Failed to complete group tasks: %v", err)
+} else {
+	fmt.Println("Successfully completed all group tasks")
+}
+```
+
+Alternatively, you can wait for all tasks in the group to complete and get all errors that occurred during their execution:
+
+``` go
+// Wait for all tasks in the group to complete and get all errors
+results, err := group.All()
+
+if err != nil {
+	fmt.Printf("Failed to complete group tasks")
+	for i, err := range results {
+		if err != nil {
+			fmt.Printf("Task #%d failed: %v", i, err)
+		}
+	}
+} else {
+	fmt.Println("Successfully completed all group tasks")
+}
+```
+
+### Submitting a group of tasks associated to a context
+
+This feature provides synchronization, error propagation, and Context cancelation for a group of related tasks. Similar to `errgroup.Group` from [`golang.org/x/sync/errgroup`](https://pkg.go.dev/golang.org/x/sync/errgroup) package but with the concurrency bounded by the worker pool.
 
 ``` go
 package main
@@ -150,17 +178,20 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/alitto/pond"
+	"github.com/alitto/pond/v2"
 )
 
 func main() {
 
 	// Create a worker pool
-	pool := pond.New(10, 1000)
+	pool := pond.NewPool(1000)
 	defer pool.StopAndWait()
 
-	// Create a task group associated to a context
-	group, ctx := pool.GroupContext(context.Background())
+	// Create a context
+	ctx := context.Background()
+
+	// Create a task group
+	group := pool.Group()
 
 	var urls = []string{
 		"https://www.golang.org/",
@@ -173,6 +204,9 @@ func main() {
 		url := url
 		group.Submit(func() error {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return err
+			}
 			resp, err := http.DefaultClient.Do(req)
 			if err == nil {
 				resp.Body.Close()
@@ -191,95 +225,36 @@ func main() {
 }
 ```
 
-### Pool Configuration Options
+### Using a Custom Context
 
-#### MinWorkers
-
-Specifies the minimum number of worker goroutines that must be running at any given time. These goroutines are started when the pool is created. The default value is 0. Example:
-
-``` go
-// This will create a pool with 5 running worker goroutines 
-pool := pond.New(10, 1000, pond.MinWorkers(5))
-```
-
-#### IdleTimeout
-
-Defines how long to wait before removing idle worker goroutines from the pool. The default value is 5 seconds. Example:
-
-``` go
-// This will create a pool that will remove workers 100ms after they become idle 
-pool := pond.New(10, 1000, pond.IdleTimeout(100 * time.Millisecond))
-``` 
-
-#### PanicHandler
-
-Allows to configure a custom function to handle panics thrown by tasks submitted to the pool. The default handler just writes a message to standard output using `fmt.Printf` with the following contents: `Worker exits from a panic: [panic] \n Stack trace: [stack trace]`).  Example:
+By default, all worker pools are associated to the `context.Background()` context, but you can associate a pool to a custom context by using the `pond.WithContext` function. This is useful when you need to be able to stop all running workers when a parent context is cancelled.
 
 ```go
-// Custom panic handler function
-panicHandler := func(p interface{}) {
-	fmt.Printf("Task panicked: %v", p)
-}
+// Create a custom context that can be cancelled
+customCtx, cancel := context.WithCancel(context.Background())
 
-// This will create a pool that will handle panics using a custom panic handler
-pool := pond.New(10, 1000, pond.PanicHandler(panicHandler)))
-```
-
-#### Strategy
-
-Configures the strategy used to resize the pool when backpressure is detected. You can create a custom strategy by implementing the `pond.ResizingStrategy` interface or choose one of the 3 presets:
-
-- **Eager**: maximizes responsiveness at the expense of higher resource usage, which can reduce throughput under certain conditions. This strategy is meant for worker pools that will operate at a small percentage of their capacity most of the time and may occasionally receive bursts of tasks. This is the default strategy.
-- **Balanced**: tries to find a balance between responsiveness and throughput. It's suitable for general purpose worker pools or those that will operate close to 50% of their capacity most of the time.
-- **Lazy**: maximizes throughput at the expense of responsiveness. This strategy is meant for worker pools that will operate close to their max. capacity most of the time.
-
-``` go
-// Example: create pools with different resizing strategies
-eagerPool := pond.New(10, 1000, pond.Strategy(pond.Eager()))
-balancedPool := pond.New(10, 1000, pond.Strategy(pond.Balanced()))
-lazyPool := pond.New(10, 1000, pond.Strategy(pond.Lazy()))
-```
-
-#### Context
-
-Configures a parent context on this pool to stop all workers when it is cancelled. The default value `context.Background()`. Example:
-
-``` go
-// This creates a pool that is stopped when myCtx is cancelled 
-pool := pond.New(10, 1000, pond.Context(myCtx))
+// This creates a pool that is stopped when customCtx is cancelled 
+pool := pond.WithContext(customCtx).NewPool(10)
 ``` 
-
-### Resizing strategies
-
-The following chart illustrates the behaviour of the different pool resizing strategies as the number of submitted tasks increases. Each line represents the number of worker goroutines in the pool (pool size) and the x-axis reflects the number of submitted tasks (cumulative). 
-
-![Pool resizing strategies behaviour](./docs/strategies.svg)
-
-As the name suggests, the "Eager" strategy always spawns an extra worker when there are no idles, which causes the pool to grow almost linearly with the number of submitted tasks. On the other end, the "Lazy" strategy creates one worker every N submitted tasks, where N is the maximum number of available CPUs ([GOMAXPROCS](https://golang.org/pkg/runtime/#GOMAXPROCS)). The "Balanced" strategy represents a middle ground between the previous two because it creates a worker every N/2 submitted tasks.
 
 ### Stopping a pool
 
 There are 3 methods available to stop a pool and release associated resources:
 - `pool.Stop()`: stop accepting new tasks and signal all workers to stop processing new tasks. Tasks being processed by workers will continue until completion unless the process is terminated.
 - `pool.StopAndWait()`: stop accepting new tasks and wait until all running and queued tasks have completed before returning.
-- `pool.StopAndWaitFor(deadline time.Duration)`: similar to `StopAndWait` but with a deadline to prevent waiting indefinitely.
 
 ### Metrics & monitoring
 
 Each worker pool instance exposes useful metrics that can be queried through the following methods:
 
-- `pool.RunningWorkers() int`: Current number of running workers
-- `pool.IdleWorkers() int`: Current number of idle workers
-- `pool.MinWorkers() int`: Minimum number of worker goroutines
-- `pool.MaxWorkers() int`: Maxmimum number of worker goroutines
-- `pool.MaxCapacity() int`: Maximum number of tasks that can be waiting in the queue at any given time (queue capacity)
+- `pool.RunningWorkers() int64`: Current number of running workers
 - `pool.SubmittedTasks() uint64`: Total number of tasks submitted since the pool was created
 - `pool.WaitingTasks() uint64`: Current number of tasks in the queue that are waiting to be executed
 - `pool.SuccessfulTasks() uint64`: Total number of tasks that have successfully completed their exection since the pool was created
 - `pool.FailedTasks() uint64`: Total number of tasks that completed with panic since the pool was created
 - `pool.CompletedTasks() uint64`: Total number of tasks that have completed their exection either successfully or with panic since the pool was created
 
-In our [Prometheus example](./examples/prometheus/prometheus.go) we showcase how to configure collectors for these metrics and expose them to Prometheus.
+In our [Prometheus example](./examples/prometheus/main.go) we showcase how to configure collectors for these metrics and expose them to Prometheus.
 
 ## Examples
 
@@ -310,4 +285,4 @@ Here are some of the resources which have served as inspiration when writing thi
 
 ## Contribution & Support
 
-Feel free to send a pull request if you consider there's something which can be improved. Also, please open up an issue if you run into a problem when using this library or just have a question.
+Feel free to send a pull request if you consider there's something that should be polished or improved. Also, please open up an issue if you run into a problem when using this library or just have a question about it.

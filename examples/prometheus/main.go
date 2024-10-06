@@ -79,7 +79,7 @@ func main() {
 
 }
 
-func submitTasks(pool pond.Pool[any]) {
+func submitTasks(pool pond.Pool) {
 
 	// Submit 1000 tasks
 	for i := 0; i < 1000; i++ {

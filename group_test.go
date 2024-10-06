@@ -11,12 +11,12 @@ import (
 
 func TestTaskGroupGet(t *testing.T) {
 
-	pool := NewTypedPool[int](10)
+	pool := WithOutput[int]()
 
 	group := pool.Group()
 
 	for i := 0; i < 5; i++ {
-		group.Add(func() (int, error) {
+		group.SubmitErr(func() (int, error) {
 			return i, nil
 		})
 	}
@@ -34,13 +34,13 @@ func TestTaskGroupGet(t *testing.T) {
 
 func TestTaskGroupGetWithError(t *testing.T) {
 
-	pool := NewTypedPool[int](10)
+	pool := WithOutput[int]()
 
 	group := pool.Group()
 	sampleErr := errors.New("sample error")
 
 	for i := 0; i < 5; i++ {
-		group.Add(func() (int, error) {
+		group.SubmitErr(func() (int, error) {
 			if i == 3 {
 				return 0, sampleErr
 			}
@@ -56,14 +56,14 @@ func TestTaskGroupGetWithError(t *testing.T) {
 
 func TestTaskGroupGetWithMultipleErrors(t *testing.T) {
 
-	pool := NewTypedPool[int](10)
+	pool := WithOutput[int]()
 
 	group := pool.Group()
 
 	sampleErr := errors.New("sample error")
 
 	for i := 0; i < 5; i++ {
-		group.Add(func() (int, error) {
+		group.SubmitErr(func() (int, error) {
 			if i%2 == 0 {
 				return 0, sampleErr
 			}
@@ -79,7 +79,7 @@ func TestTaskGroupGetWithMultipleErrors(t *testing.T) {
 
 func TestTaskGroupGetAll(t *testing.T) {
 
-	pool := NewTypedPool[int](10)
+	pool := WithOutput[int]()
 
 	group := pool.Group()
 	groupAll := pool.Group()
@@ -91,8 +91,8 @@ func TestTaskGroupGetAll(t *testing.T) {
 			}
 			return i, nil
 		}
-		group.Add(task)
-		groupAll.Add(task)
+		group.SubmitErr(task)
+		groupAll.SubmitErr(task)
 	}
 
 	results, err := group.Get()
@@ -101,9 +101,9 @@ func TestTaskGroupGetAll(t *testing.T) {
 	assert.Equal(t, 0, len(results))
 	assert.True(t, strings.Contains(err.Error(), "error"))
 
-	resultsAll, err := groupAll.GetAll()
+	resultsAll, err := groupAll.All()
 
-	assert.Equal(t, nil, err)
+	assert.True(t, err != nil)
 	assert.Equal(t, 5, len(resultsAll))
 	assert.Equal(t, 0, resultsAll[0].Output)
 	assert.Equal(t, 1, resultsAll[1].Output)
