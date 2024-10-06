@@ -90,7 +90,7 @@ func TestSubpoolMetrics(t *testing.T) {
 
 	for i := 0; i < 20; i++ {
 		if i%2 == 0 {
-			subpool.Submit(func() error {
+			subpool.SubmitErr(func() error {
 				if i%4 == 0 {
 					return sampleErr
 				}
@@ -98,7 +98,7 @@ func TestSubpoolMetrics(t *testing.T) {
 				return nil
 			})
 		} else {
-			pool.Submit(func() error {
+			pool.SubmitErr(func() error {
 				if i%3 == 0 {
 					return sampleErr
 				}

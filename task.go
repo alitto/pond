@@ -1,7 +1,6 @@
 package pond
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -12,12 +11,13 @@ import (
 var ErrPanic = errors.New("task panicked")
 
 type subpoolTask[O any] struct {
-	task      any
-	sem       chan struct{}
-	waitGroup *sync.WaitGroup
+	task          any
+	sem           chan struct{}
+	waitGroup     *sync.WaitGroup
+	updateMetrics func(error)
 }
 
-func (t subpoolTask[O]) Run(ctx context.Context) {
+func (t subpoolTask[O]) Run() {
 	defer func() {
 		// Release semaphore
 		<-t.sem
@@ -25,58 +25,51 @@ func (t subpoolTask[O]) Run(ctx context.Context) {
 		t.waitGroup.Done()
 	}()
 
-	invokeTask[O](t.task, ctx)
+	_, err := invokeTask[O](t.task)
+
+	if t.updateMetrics != nil {
+		t.updateMetrics(err)
+	}
 }
 
 type wrappedTask[O any] struct {
-	task      any
-	callbacks []func(O, error)
+	task     any
+	callback func(O, error)
 }
 
-func (t wrappedTask[O]) Run(ctx context.Context) {
-	output, err := invokeTask[O](t.task, ctx)
+func (t wrappedTask[O]) Run() {
+	output, err := invokeTask[O](t.task)
 
-	if t.callbacks == nil {
-		return
-	}
-
-	for _, callback := range t.callbacks {
-		callback(output, err)
-	}
+	t.callback(output, err)
 }
 
-func wrapTask[O any](task any, callbacks ...func(O, error)) *wrappedTask[O] {
-	return &wrappedTask[O]{
-		task:      task,
-		callbacks: callbacks,
-	}
+func (t wrappedTask[O]) RunErr() error {
+	output, err := invokeTask[O](t.task)
+
+	t.callback(output, err)
+
+	return err
 }
 
-func validateTask[O any](task any) {
-
-	switch any(task).(type) {
-	case func():
-		return
-	case func(context.Context):
-		return
-	case func() error:
-		return
-	case func(context.Context) error:
-		return
-	case func() O:
-		return
-	case func(context.Context) O:
-		return
-	case func() (O, error):
-		return
-	case func(context.Context) (O, error):
-		return
-	default:
-		panic(fmt.Sprintf("unsupported task type: %#v", task))
+func wrapTask[O any](task any, callback func(O, error)) func() {
+	wrapped := &wrappedTask[O]{
+		task:     task,
+		callback: callback,
 	}
+
+	return wrapped.Run
 }
 
-func invokeTask[O any](task any, ctx context.Context) (output O, err error) {
+func wrapTaskErr[O any](task any, callback func(O, error)) func() error {
+	wrapped := &wrappedTask[O]{
+		task:     task,
+		callback: callback,
+	}
+
+	return wrapped.RunErr
+}
+
+func invokeTask[O any](task any) (output O, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("%w: %v", ErrPanic, p)
@@ -87,33 +80,24 @@ func invokeTask[O any](task any, ctx context.Context) (output O, err error) {
 	switch t := any(task).(type) {
 	case func():
 		t()
-	case func(context.Context):
-		t(ctx)
 	case func() error:
 		err = t()
-	case func(context.Context) error:
-		err = t(ctx)
 	case func() O:
 		output = t()
-	case func(context.Context) O:
-		output = t(ctx)
 	case func() (O, error):
 		output, err = t()
-	case func(context.Context) (O, error):
-		output, err = t(ctx)
 	default:
 		panic(fmt.Sprintf("unsupported task type: %#v", task))
 	}
 	return
 }
 
-func submitTyped[O any](task any, ctx context.Context, runner TaskRunner) Future[O] {
+func submitTask[T TaskFunc[O], O any](task T, pool AbstractPool) Output[O] {
+	future, resolve := future.NewFuture[O](pool.Context())
 
-	future, resolve := future.NewFuture[O](ctx)
+	wrapped := wrapTask(task, resolve)
 
-	futureTask := wrapTask(task, resolve)
-
-	runner.Go(futureTask.Run)
+	pool.Go(wrapped)
 
 	return future
 }

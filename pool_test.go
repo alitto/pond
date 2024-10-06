@@ -29,36 +29,6 @@ func TestPoolSubmit(t *testing.T) {
 	assert.Equal(t, int64(taskCount), executedCount.Load())
 }
 
-func TestTypedPoolSubmitAndGet(t *testing.T) {
-
-	pool := NewTypedPool[int](10000)
-	defer pool.StopAndWait()
-
-	task := pool.Submit(func() int {
-		return 5
-	})
-
-	output, err := task.Get()
-
-	assert.Equal(t, nil, err)
-	assert.Equal(t, 5, output)
-}
-
-func TestTypedPoolSubmitTaskWithPanic(t *testing.T) {
-
-	pool := NewTypedPool[int](10000)
-
-	task := pool.Submit(func() int {
-		panic("dummy panic")
-	})
-
-	output, err := task.Get()
-
-	assert.True(t, errors.Is(err, ErrPanic))
-	assert.Equal(t, "task panicked: dummy panic", err.Error())
-	assert.Equal(t, 0, output)
-}
-
 func TestPoolGo(t *testing.T) {
 
 	pool := NewPool(10000)
@@ -77,7 +47,7 @@ func TestPoolWithContextCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	pool := NewPool(10, WithContext(ctx))
+	pool := WithContext(ctx).NewPool(10)
 
 	assert.Equal(t, int64(0), pool.RunningWorkers())
 	assert.Equal(t, uint64(0), pool.SubmittedTasks())
@@ -121,7 +91,7 @@ func TestPoolMetrics(t *testing.T) {
 
 	for i := 0; i < taskCount; i++ {
 		n := i
-		pool.Submit(func() error {
+		pool.SubmitErr(func() error {
 			executedCount.Add(1)
 			if n%2 == 0 {
 				return nil
