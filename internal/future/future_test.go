@@ -8,61 +8,46 @@ import (
 	"github.com/alitto/pond/v2/internal/assert"
 )
 
-func TestFutureGet(t *testing.T) {
+func TestFutureWait(t *testing.T) {
 
 	ctx := context.Background()
 
-	future, resolve := NewFuture[int](ctx)
+	future, resolve := NewFuture(ctx)
 
-	resolve(5, nil)
+	resolve(nil)
 
-	out, err := future.Get()
-
-	assert.Equal(t, nil, err)
-	assert.Equal(t, 5, out)
-	assert.Equal(t, context.Canceled, future.Context().Err())
-
-	err = future.Wait()
+	err := future.Wait()
 
 	assert.Equal(t, nil, err)
 }
 
-func TestFutureGetWithError(t *testing.T) {
+func TestFutureWaitWithError(t *testing.T) {
 
 	ctx := context.Background()
 
-	future, resolve := NewFuture[int](ctx)
+	future, resolve := NewFuture(ctx)
 
-	err := errors.New("sample error")
+	sampleErr := errors.New("sample error")
 
-	resolve(0, err)
+	resolve(sampleErr)
 
-	out, err := future.Get()
+	err := future.Wait()
 
-	assert.Equal(t, err, err)
-	assert.Equal(t, 0, out)
-
-	err = future.Wait()
-
-	assert.Equal(t, err, err)
+	assert.Equal(t, sampleErr, err)
+	assert.Equal(t, "sample error", err.Error())
 }
 
-func TestFutureGetWithCanceledContext(t *testing.T) {
+func TestFutureWaitWithCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	future, resolve := NewFuture[int](ctx)
+	future, resolve := NewFuture(ctx)
 
 	cancel()
 
-	resolve(0, nil)
+	resolve(errors.New("sample error"))
 
-	out, err := future.Get()
-
-	assert.Equal(t, context.Canceled, err)
-	assert.Equal(t, 0, out)
-
-	err = future.Wait()
+	err := future.Wait()
 
 	assert.Equal(t, context.Canceled, err)
 }

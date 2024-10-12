@@ -42,7 +42,7 @@ var urls = []string{
 func main() {
 
 	// Create a task group
-	group := pond.WithOutput[string]().Group()
+	group := pond.WithResult[string]().Group()
 
 	ctx := context.Background()
 
@@ -55,7 +55,7 @@ func main() {
 	}
 
 	// Wait for all HTTP requests to complete.
-	responses, err := group.Get()
+	responses, err := group.Wait()
 
 	if err != nil {
 		fmt.Printf("Failed to fetch URLs: %v", err)

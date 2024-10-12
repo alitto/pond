@@ -124,3 +124,32 @@ func TestSubpoolMetrics(t *testing.T) {
 	assert.Equal(t, uint64(0), subpool.WaitingTasks())
 
 }
+
+func TestSubpoolStop(t *testing.T) {
+	pool := NewPool(10)
+	subpool := pool.Subpool(5)
+
+	var executedCount atomic.Int64
+
+	subpool.Submit(func() {
+		executedCount.Add(1)
+	})
+
+	subpool.StopAndWait()
+
+	pool.Submit(func() {
+		executedCount.Add(1)
+	}).Wait()
+
+	assert.Equal(t, int64(2), executedCount.Load())
+
+	err := subpool.Submit(func() {}).Wait()
+
+	assert.True(t, errors.Is(err, ErrPoolStopped))
+
+	pool.StopAndWait()
+
+	err = pool.Submit(func() {}).Wait()
+
+	assert.True(t, errors.Is(err, ErrPoolStopped))
+}

@@ -29,6 +29,48 @@ func TestPoolSubmit(t *testing.T) {
 	assert.Equal(t, int64(taskCount), executedCount.Load())
 }
 
+func TestPoolSubmitAndWait(t *testing.T) {
+
+	pool := NewPool(100)
+
+	done := make(chan int, 1)
+	task := pool.Submit(func() {
+		done <- 10
+	})
+
+	err := task.Wait()
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 10, <-done)
+}
+
+func TestPoolSubmitWithPanic(t *testing.T) {
+
+	pool := NewPool(100)
+
+	task := pool.Submit(func() {
+		panic("dummy panic")
+	})
+
+	err := task.Wait()
+
+	assert.True(t, errors.Is(err, ErrPanic))
+	assert.Equal(t, "task panicked: dummy panic", err.Error())
+}
+
+func TestPoolSubmitWithErr(t *testing.T) {
+
+	pool := NewPool(100)
+
+	task := pool.SubmitErr(func() error {
+		return errors.New("sample error")
+	})
+
+	err := task.Wait()
+
+	assert.Equal(t, "sample error", err.Error())
+}
+
 func TestPoolGo(t *testing.T) {
 
 	pool := NewPool(10000)

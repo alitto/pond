@@ -10,7 +10,7 @@ import (
 
 func main() {
 
-	pool := pond.WithOutput[time.Duration]()
+	pool := pond.WithResult[time.Duration]()
 
 	// Submit a sample task that runs asynchronously in the worker pool and returns a string
 	task := pool.Submit(func() time.Duration {
@@ -20,7 +20,7 @@ func main() {
 	})
 
 	// Submit the group and get the responses
-	sleepTime, err := task.Get()
+	sleepTime, err := task.Wait()
 
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)

@@ -2,28 +2,29 @@ package future
 
 import (
 	"context"
-	"sync/atomic"
+	"fmt"
+	"sync"
 )
 
 type CompositeFutureResolver[V any] func(index int, value V, err error)
 
 type CompositeFuture[V any] struct {
-	*Future[[]V]
-	resolver FutureResolver[[]V]
+	*ValueFuture[[]V]
+	resolver ValueFutureResolver[[]V]
 	values   []V
-	pending  atomic.Int64
+	pending  int
+	mutex    sync.Mutex
 }
 
 func NewCompositeFuture[V any](ctx context.Context, count int) (*CompositeFuture[V], CompositeFutureResolver[V]) {
-	childFuture, resolver := NewFuture[[]V](ctx)
+	childFuture, resolver := NewValueFuture[[]V](ctx)
 
 	future := &CompositeFuture[V]{
-		Future:   childFuture,
-		resolver: resolver,
-		values:   make([]V, count),
+		ValueFuture: childFuture,
+		resolver:    resolver,
+		values:      make([]V, count),
+		pending:     count,
 	}
-
-	future.pending.Store(int64(count))
 
 	return future, future.resolve
 }
@@ -31,18 +32,21 @@ func NewCompositeFuture[V any](ctx context.Context, count int) (*CompositeFuture
 func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
 
 	if index < 0 {
-		panic("index must be greater than or equal to 0")
+		panic(fmt.Errorf("index must be greater than or equal to 0"))
 	}
 	if index >= len(f.values) {
-		panic("index must be less than the number of values")
+		panic(fmt.Errorf("index must be less than %d", len(f.values)))
 	}
 
-	pending := f.pending.Add(-1)
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	f.pending--
 
 	// Save the value
 	f.values[index] = value
 
-	if pending == 0 || err != nil {
+	if f.pending == 0 || err != nil {
 		if err != nil {
 			f.resolver([]V{}, err)
 		} else {

@@ -8,16 +8,16 @@ import (
 	"github.com/alitto/pond/v2/internal/assert"
 )
 
-func TestGenericPoolSubmitAndGet(t *testing.T) {
+func TestGenericPoolSubmitAndWait(t *testing.T) {
 
-	pool := WithOutput[int]().NewPool(10000)
+	pool := WithResult[int]().NewPool(1000)
 	defer pool.StopAndWait()
 
 	task := pool.Submit(func() int {
 		return 5
 	})
 
-	output, err := task.Get()
+	output, err := task.Wait()
 
 	assert.Equal(t, nil, err)
 	assert.Equal(t, 5, output)
@@ -25,13 +25,13 @@ func TestGenericPoolSubmitAndGet(t *testing.T) {
 
 func TestGenericPoolSubmitTaskWithPanic(t *testing.T) {
 
-	pool := WithOutput[int]().NewPool(10000)
+	pool := WithResult[int]().NewPool(1000)
 
 	task := pool.Submit(func() int {
 		panic("dummy panic")
 	})
 
-	output, err := task.Get()
+	output, err := task.Wait()
 
 	assert.True(t, errors.Is(err, ErrPanic))
 	assert.Equal(t, "task panicked: dummy panic", err.Error())
@@ -40,7 +40,7 @@ func TestGenericPoolSubmitTaskWithPanic(t *testing.T) {
 
 func TestGenericPoolMetrics(t *testing.T) {
 
-	pool := WithOutput[int]().NewPool(10000)
+	pool := WithResult[int]().NewPool(1000)
 
 	// Assert counters
 	assert.Equal(t, int64(0), pool.RunningWorkers())

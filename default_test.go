@@ -31,3 +31,19 @@ func TestSubmitWithPanic(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrPanic))
 	assert.Equal(t, "task panicked: dummy panic", err.Error())
 }
+
+func TestGroupSubmitWithFluentSyntax(t *testing.T) {
+
+	results, err := WithResult[string]().
+		Group(func() string {
+			return "hello"
+		}, func() string {
+			return "world"
+		}).
+		Wait()
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 2, len(results))
+	assert.Equal(t, "hello", results[0])
+	assert.Equal(t, "world", results[1])
+}
