@@ -24,7 +24,7 @@ type Dispatcher[T any] struct {
 // and process each element serially using the dispatchFunc
 func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize int) *Dispatcher[T] {
 	dispatcher := &Dispatcher[T]{
-		buffer:            linkedbuffer.NewLinkedBuffer[T](batchSize, 10*batchSize),
+		buffer:            linkedbuffer.NewLinkedBuffer[T](batchSize, batchSize),
 		bufferHasElements: make(chan struct{}, 1),
 		dispatchFunc:      dispatchFunc,
 		batchSize:         batchSize,

@@ -1,24 +1,30 @@
 package pond
 
-// Default pool size
-const DEFAULT_POOL_SIZE = 10000
+import (
+	"context"
+)
 
-var defaultPool = NewPool(DEFAULT_POOL_SIZE)
+// defaultPool is the default pool used by the package-level functions.
+var defaultPool = newPool(0, context.Background())
 
 func Go(task func()) {
 	defaultPool.Go(task)
 }
 
-func Submit(task func()) Async {
+func Submit(task func()) TaskFuture {
 	return defaultPool.Submit(task)
 }
 
-func SubmitErr(task func() error) Async {
+func SubmitErr(task func() error) TaskFuture {
 	return defaultPool.SubmitErr(task)
 }
 
-func Group() TaskGroup {
-	return NewTaskGroup(defaultPool)
+func Group(tasks ...func()) TaskGroup {
+	return defaultPool.Group(tasks...)
+}
+
+func GroupErr(tasks ...func() error) TaskGroup {
+	return defaultPool.GroupErr(tasks...)
 }
 
 func Subpool(maxConcurrency int) Pool {

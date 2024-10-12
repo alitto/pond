@@ -1,77 +1,61 @@
 package pond
 
-import "context"
+import (
+	"context"
+)
 
-type withOutput[O any] struct {
+type withResultPool[R any] interface {
+	GenericPool[R]
+
+	// NewPool creates a new pool with the specified maximum concurrency.
+	NewPool(maxConcurrency int) GenericPool[R]
+
+	// WithContext creates a new pool with the specified context.
+	WithContext(ctx context.Context) withResultPool[R]
+}
+
+type withResult[R any] struct {
 	ctx context.Context
+	GenericPool[R]
 }
 
-func (w withOutput[O]) NewPool(maxConcurrency int) GenericPool[O] {
-	return newGenericPool[O](maxConcurrency, w.ctx, nil)
+func (w withResult[R]) NewPool(maxConcurrency int) GenericPool[R] {
+	return newGenericPool[R](maxConcurrency, w.ctx)
 }
 
-func (w withOutput[O]) Go(task func()) {
-	defaultPool.Go(task)
-}
-
-func (w withOutput[O]) Submit(task func() O) Output[O] {
-	return submitTask[func() O, O](task, defaultPool)
-}
-
-func (w withOutput[O]) SubmitErr(task func() (O, error)) Output[O] {
-	return submitTask[func() (O, error), O](task, defaultPool)
-}
-
-func (w withOutput[O]) Group() GenericTaskGroup[O] {
-	return NewGenericTaskGroup[O](defaultPool)
-}
-
-func (w withOutput[O]) Subpool(maxConcurrency int) GenericPool[O] {
-	return newGenericPool[O](maxConcurrency, w.ctx, defaultPool)
-}
-
-func (w withOutput[O]) WithContext(ctx context.Context) withOutput[O] {
-	return withOutput[O]{ctx: ctx}
-}
-
-func WithOutput[O any]() withOutput[O] {
-	return withOutput[O]{
-		ctx: context.Background(),
+func (w withResult[R]) WithContext(ctx context.Context) withResultPool[R] {
+	return &withResult[R]{
+		ctx:         ctx,
+		GenericPool: newGenericSubpool[R](0, ctx, defaultPool),
 	}
 }
 
+func WithResult[R any]() withResultPool[R] {
+	return &withResult[R]{
+		ctx:         context.Background(),
+		GenericPool: newGenericSubpool[R](0, context.Background(), defaultPool),
+	}
+}
+
+type withContextPool interface {
+	Pool
+
+	// NewPool creates a new pool with the specified maximum concurrency.
+	NewPool(maxConcurrency int) Pool
+}
+
 type withContext struct {
-	ctx         context.Context
-	defaultPool Pool
+	ctx context.Context
+	Pool
 }
 
 func (w withContext) NewPool(maxConcurrency int) Pool {
-	return newPool(maxConcurrency, w.ctx, nil)
+	return newPool(maxConcurrency, w.ctx)
 }
 
-func (w withContext) Go(task func()) {
-	w.defaultPool.Go(task)
-}
-
-func (w withContext) Submit(task func()) Async {
-	return submitTask[func(), struct{}](task, w.defaultPool)
-}
-
-func (w withContext) SubmitErr(task func() error) Async {
-	return submitTask[func() error, struct{}](task, w.defaultPool)
-}
-
-func (w withContext) Group() TaskGroup {
-	return NewTaskGroup(w.defaultPool)
-}
-
-func (w withContext) Subpool(maxConcurrency int) Pool {
-	return newPool(maxConcurrency, w.ctx, w.defaultPool)
-}
-
-func WithContext(ctx context.Context) withContext {
-	return withContext{
-		ctx:         ctx,
-		defaultPool: NewPool(DEFAULT_POOL_SIZE),
+func WithContext(ctx context.Context) withContextPool {
+	return &withContext{
+		ctx:  ctx,
+		Pool: newSubpool(0, ctx, defaultPool),
 	}
 }

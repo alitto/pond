@@ -2,6 +2,8 @@ package pond
 
 import (
 	"context"
+	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -10,6 +12,8 @@ import (
 )
 
 const DEFAULT_TASKS_CHAN_LENGTH = 2048
+
+var ErrPoolStopped = errors.New("pool stopped")
 
 type MeteredPool interface {
 	// Returns the number of worker goroutines that are currently active (executing a task) in the pool.
@@ -35,36 +39,42 @@ type MeteredPool interface {
  * Interface implemented by all worker pools in this library.
  * @param O The type of the output of the tasks submitted to the pool
  */
-type AbstractPool interface {
+type abstractPool interface {
 	MeteredPool
 
 	// Returns the context associated with this pool.
 	Context() context.Context
 
+	// Returns the maximum concurrency of the pool.
+	MaxConcurrency() int
+
 	// Runs the task
-	Go(task func())
+	Go(task func()) error
 
 	// Stops the pool and returns a future that can be used to wait for all tasks pending to complete.
-	Stop() Async
+	Stop() TaskFuture
 
 	// Stops the pool and waits for all tasks to complete.
 	StopAndWait()
 }
 
 type Pool interface {
-	AbstractPool
+	abstractPool
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
-	Submit(task func()) Async
+	Submit(task func()) TaskFuture
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
-	SubmitErr(task func() error) Async
+	SubmitErr(task func() error) TaskFuture
 
 	// Creates a new subpool with the specified maximum concurrency.
 	Subpool(maxConcurrency int) Pool
 
 	// Creates a new task group.
-	Group() TaskGroup
+	Group(tasks ...func()) TaskGroup
+
+	// Creates a new task group.
+	GroupErr(tasks ...func() error) TaskGroup
 }
 
 // pool is an implementation of the Pool interface.
@@ -78,14 +88,14 @@ type pool struct {
 	dispatcher          *dispatcher.Dispatcher[any]
 	successfulTaskCount atomic.Uint64
 	failedTaskCount     atomic.Uint64
-	// Subpool properties
-	parent    AbstractPool
-	waitGroup sync.WaitGroup
-	sem       chan struct{}
 }
 
 func (p *pool) Context() context.Context {
 	return p.ctx
+}
+
+func (p *pool) MaxConcurrency() int {
+	return p.maxConcurrency
 }
 
 func (p *pool) RunningWorkers() int64 {
@@ -120,39 +130,43 @@ func (p *pool) updateMetrics(err error) {
 	}
 }
 
-func (p *pool) Go(task func()) {
-	p.dispatcher.Write(task)
+func (p *pool) Go(task func()) error {
+	err := p.dispatcher.Write(task)
+	if err == dispatcher.ErrDispatcherClosed {
+		return ErrPoolStopped
+	}
+	return err
 }
 
-func (p *pool) Submit(task func()) Async {
-	future, resolve := future.NewFuture[struct{}](p.Context())
+func (p *pool) Submit(task func()) TaskFuture {
+	return p.submit(task)
+}
+
+func (p *pool) SubmitErr(task func() error) TaskFuture {
+	return p.submit(task)
+}
+
+func (p *pool) submit(task any) TaskFuture {
+
+	future, resolve := future.NewFuture(p.Context())
 
 	wrapped := wrapTask(task, resolve)
 
-	p.dispatcher.Write(wrapped)
+	if err := p.dispatcher.Write(wrapped); err != nil {
+		if err == dispatcher.ErrDispatcherClosed {
+			resolve(ErrPoolStopped)
+		} else {
+			resolve(err)
+		}
+		return future
+	}
 
 	return future
 }
 
-func (p *pool) SubmitErr(task func() error) Async {
-	future, resolve := future.NewFuture[struct{}](p.Context())
-
-	wrapped := wrapTaskErr(task, resolve)
-
-	p.dispatcher.Write(wrapped)
-
-	return future
-}
-
-func (p *pool) Stop() Async {
+func (p *pool) Stop() TaskFuture {
 	return Submit(func() {
 		p.dispatcher.CloseAndWait()
-
-		p.waitGroup.Wait()
-
-		if p.sem != nil {
-			close(p.sem)
-		}
 
 		close(p.tasks)
 
@@ -166,75 +180,53 @@ func (p *pool) StopAndWait() {
 }
 
 func (p *pool) Subpool(maxConcurrency int) Pool {
-	return newPool(maxConcurrency, p.ctx, p)
+	return newSubpool(maxConcurrency, p.ctx, p)
 }
 
-func (p *pool) Group() TaskGroup {
-	return NewTaskGroup(p)
+func (p *pool) Group(tasks ...func()) TaskGroup {
+	return newTaskGroup(p).Submit(tasks...)
+}
+
+func (p *pool) GroupErr(tasks ...func() error) TaskGroup {
+	return newTaskGroup(p).SubmitErr(tasks...)
 }
 
 func (p *pool) dispatch(incomingTasks []any) {
-
-	var workerCount int
-
 	// Submit tasks
 	for _, task := range incomingTasks {
-
-		workerCount = int(p.workerCount.Load())
-
-		if workerCount < p.tasksLen {
-			// If there are less workers than the size of the channel, start workers
-			p.startWorker()
-		}
-
-		// Attempt to submit task without blocking
-		select {
-		case p.tasks <- task:
-			// Task submitted
-			continue
-		default:
-		}
-
-		// There are no idle workers, create more
-		if workerCount < p.maxConcurrency {
-			// Launch a new worker
-			p.startWorker()
-		}
-
-		// Block until task is submitted
-		select {
-		case p.tasks <- task:
-			// Task submitted
-		case <-p.ctx.Done():
-			// Context cancelled, exit
-			return
-		}
+		p.dispatchTask(task)
 	}
 }
 
-func (p *pool) subpoolDispatch(incomingTasks []any) {
+func (p *pool) dispatchTask(task any) {
+	workerCount := int(p.workerCount.Load())
 
-	p.waitGroup.Add(len(incomingTasks))
+	if workerCount < p.tasksLen {
+		// If there are less workers than the size of the channel, start workers
+		p.startWorker()
+	}
 
-	// Submit tasks
-	for _, task := range incomingTasks {
+	// Attempt to submit task without blocking
+	select {
+	case p.tasks <- task:
+		// Task submitted
+		return
+	default:
+	}
 
-		select {
-		case <-p.Context().Done():
-			// Context canceled, exit
-			return
-		case p.sem <- struct{}{}:
-			// Acquired the semaphore, submit another task
-		}
+	// There are no idle workers, create more
+	if workerCount < p.maxConcurrency {
+		// Launch a new worker
+		p.startWorker()
+	}
 
-		subpoolTask := subpoolTask[any]{
-			task:          task,
-			sem:           p.sem,
-			waitGroup:     &p.waitGroup,
-			updateMetrics: p.updateMetrics,
-		}
-
-		p.parent.Go(subpoolTask.Run)
+	// Block until task is submitted
+	select {
+	case p.tasks <- task:
+		// Task submitted
+	case <-p.ctx.Done():
+		// Context cancelled, exit
+		return
 	}
 }
 
@@ -282,7 +274,11 @@ func (p *pool) worker() {
 	}
 }
 
-func newPool(maxConcurrency int, ctx context.Context, parent AbstractPool) *pool {
+func newPool(maxConcurrency int, ctx context.Context) *pool {
+
+	if maxConcurrency == 0 {
+		maxConcurrency = math.MaxInt
+	}
 
 	if maxConcurrency <= 0 {
 		panic("maxConcurrency must be greater than 0")
@@ -298,21 +294,14 @@ func newPool(maxConcurrency int, ctx context.Context, parent AbstractPool) *pool
 		maxConcurrency: maxConcurrency,
 		tasks:          make(chan any, tasksLen),
 		tasksLen:       tasksLen,
-		parent:         parent,
 	}
 
-	if parent != nil {
-		// Subpool
-		pool.sem = make(chan struct{}, maxConcurrency)
-		pool.dispatcher = dispatcher.NewDispatcher(pool.ctx, pool.subpoolDispatch, tasksLen)
-	} else {
-		pool.dispatcher = dispatcher.NewDispatcher(pool.ctx, pool.dispatch, tasksLen)
-	}
+	pool.dispatcher = dispatcher.NewDispatcher(pool.ctx, pool.dispatch, tasksLen)
 
 	return pool
 }
 
 // NewPool creates a new pool with the specified maximum concurrency and options.
 func NewPool(maxConcurrency int) Pool {
-	return newPool(maxConcurrency, context.Background(), nil)
+	return newPool(maxConcurrency, context.Background())
 }
