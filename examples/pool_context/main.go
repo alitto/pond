@@ -24,7 +24,7 @@ func main() {
 	}()
 
 	// Create a pool and pass the context to it.
-	pool := pond.WithContext(ctx).NewPool(10)
+	pool := pond.NewPool(10, pond.WithContext(ctx))
 
 	// Submit several long runnning tasks
 	var count int = 100

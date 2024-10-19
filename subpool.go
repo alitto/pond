@@ -2,31 +2,33 @@ package pond
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/alitto/pond/v2/internal/dispatcher"
 )
 
+// subpool is a pool that is a subpool of another pool
 type subpool struct {
 	*pool
-	parent    Pool
+	parent    *pool
 	waitGroup sync.WaitGroup
 	sem       chan struct{}
 }
 
-// Subpool creates a new pool with the specified maximum concurrency.
-func newSubpool(maxConcurrency int, ctx context.Context, parent Pool) Pool {
+func newSubpool(maxConcurrency int, ctx context.Context, parent *pool) Pool {
 
 	if maxConcurrency == 0 {
 		maxConcurrency = parent.MaxConcurrency()
 	}
 
 	if maxConcurrency < 0 {
-		panic("maxConcurrency must be greater than 0")
+		panic(errors.New("maxConcurrency must be greater or equal to 0"))
 	}
 
 	if maxConcurrency > parent.MaxConcurrency() {
-		panic("maxConcurrency must be less than or equal to the parent pool's maxConcurrency")
+		panic(fmt.Errorf("maxConcurrency cannot be greater than the parent pool's maxConcurrency (%d)", parent.MaxConcurrency()))
 	}
 
 	tasksLen := DEFAULT_TASKS_CHAN_LENGTH
@@ -74,7 +76,7 @@ func (p *subpool) dispatch(incomingTasks []any) {
 	}
 }
 
-func (p *subpool) Stop() TaskFuture {
+func (p *subpool) Stop() Task {
 	return Submit(func() {
 		p.dispatcher.CloseAndWait()
 
@@ -82,4 +84,8 @@ func (p *subpool) Stop() TaskFuture {
 
 		close(p.sem)
 	})
+}
+
+func (p *subpool) StopAndWait() {
+	p.Stop().Wait()
 }

@@ -8,12 +8,18 @@ import (
 
 type CompositeFutureResolver[V any] func(index int, value V, err error)
 
+type compositeResolution[V any] struct {
+	index int
+	value V
+	err   error
+}
+
 type CompositeFuture[V any] struct {
 	*ValueFuture[[]V]
-	resolver ValueFutureResolver[[]V]
-	values   []V
-	pending  int
-	mutex    sync.Mutex
+	resolver    ValueFutureResolver[[]V]
+	resolutions []compositeResolution[V]
+	count       int
+	mutex       sync.Mutex
 }
 
 func NewCompositeFuture[V any](ctx context.Context, count int) (*CompositeFuture[V], CompositeFutureResolver[V]) {
@@ -22,35 +28,59 @@ func NewCompositeFuture[V any](ctx context.Context, count int) (*CompositeFuture
 	future := &CompositeFuture[V]{
 		ValueFuture: childFuture,
 		resolver:    resolver,
-		values:      make([]V, count),
-		pending:     count,
+		resolutions: make([]compositeResolution[V], 0),
+	}
+
+	if count > 0 {
+		future.Add(count)
 	}
 
 	return future, future.resolve
 }
 
-func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
-
-	if index < 0 {
-		panic(fmt.Errorf("index must be greater than or equal to 0"))
-	}
-	if index >= len(f.values) {
-		panic(fmt.Errorf("index must be less than %d", len(f.values)))
+func (f *CompositeFuture[V]) Add(delta int) {
+	if delta <= 0 {
+		panic(fmt.Errorf("delta must be greater than 0"))
 	}
 
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	f.pending--
+	f.count += delta
+}
 
-	// Save the value
-	f.values[index] = value
+func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
+	if index < 0 {
+		panic(fmt.Errorf("index must be greater than or equal to 0"))
+	}
+	if index >= f.count {
+		panic(fmt.Errorf("index must be less than %d", f.count))
+	}
 
-	if f.pending == 0 || err != nil {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	// Save the resolution
+	f.resolutions = append(f.resolutions, compositeResolution[V]{
+		index: index,
+		value: value,
+		err:   err,
+	})
+
+	pending := f.count - len(f.resolutions)
+
+	if pending == 0 || err != nil {
 		if err != nil {
 			f.resolver([]V{}, err)
 		} else {
-			f.resolver(f.values, nil)
+
+			// Sort the resolutions
+			values := make([]V, f.count)
+			for _, resolution := range f.resolutions {
+				values[resolution.index] = resolution.value
+			}
+
+			f.resolver(values, nil)
 		}
 	}
 }

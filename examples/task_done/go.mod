@@ -1,4 +1,4 @@
-module github.com/alitto/pond/v2/examples/async_task
+module github.com/alitto/pond/v2/examples/task_done
 
 go 1.22
 

@@ -13,16 +13,25 @@ type Future struct {
 	ctx context.Context
 }
 
-// Wait waits for the future to complete and returns any error that occurred.
-func (f *Future) Wait() error {
+func (f *Future) Done() <-chan struct{} {
+	return f.ctx.Done()
+}
+
+func (f *Future) Err() error {
 	<-f.ctx.Done()
 
 	cause := context.Cause(f.ctx)
-	if resolution, ok := cause.(*futureResolution); ok {
-		return resolution.err
+	if cause != nil {
+		if resolution, ok := cause.(*futureResolution); ok {
+			return resolution.err
+		}
 	}
-
 	return cause
+}
+
+// Wait waits for the future to complete and returns any error that occurred.
+func (f *Future) Wait() error {
+	return f.Err()
 }
 
 func NewFuture(ctx context.Context) (*Future, FutureResolver) {

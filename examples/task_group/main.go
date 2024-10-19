@@ -41,10 +41,13 @@ var urls = []string{
 
 func main() {
 
-	// Create a task group
-	group := pond.WithResult[string]().Group()
-
 	ctx := context.Background()
+
+	// Create a pool with a result type of string
+	pool := pond.NewResultPool[string](10)
+
+	// Create a task group
+	group := pool.NewGroup()
 
 	// Create tasks for fetching URLs
 	for _, url := range urls {

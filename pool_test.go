@@ -71,25 +71,11 @@ func TestPoolSubmitWithErr(t *testing.T) {
 	assert.Equal(t, "sample error", err.Error())
 }
 
-func TestPoolGo(t *testing.T) {
-
-	pool := NewPool(10000)
-
-	done := make(chan int, 1)
-	pool.Go(func() {
-		done <- 3
-	})
-
-	pool.Stop().Wait()
-
-	assert.Equal(t, 3, <-done)
-}
-
 func TestPoolWithContextCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	pool := WithContext(ctx).NewPool(10)
+	pool := NewPool(10, WithContext(ctx))
 
 	assert.Equal(t, int64(0), pool.RunningWorkers())
 	assert.Equal(t, uint64(0), pool.SubmittedTasks())
@@ -150,4 +136,17 @@ func TestPoolMetrics(t *testing.T) {
 	assert.Equal(t, uint64(taskCount), pool.CompletedTasks())
 	assert.Equal(t, uint64(taskCount/2), pool.FailedTasks())
 	assert.Equal(t, uint64(taskCount/2), pool.SuccessfulTasks())
+}
+
+func TestPoolSubmitOnStoppedPool(t *testing.T) {
+
+	pool := NewPool(100)
+
+	pool.Submit(func() {})
+
+	pool.StopAndWait()
+
+	err := pool.Submit(func() {}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
 }

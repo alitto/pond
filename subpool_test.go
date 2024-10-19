@@ -16,8 +16,8 @@ func TestSubpool(t *testing.T) {
 	maxConcurrency := 5
 
 	pool := NewPool(10)
-	subpool := pool.Subpool(maxConcurrency)
-	subsubpool := subpool.Subpool(1)
+	subpool := pool.NewSubpool(maxConcurrency)
+	subsubpool := subpool.NewSubpool(1)
 
 	completed := make(chan struct{})
 	var subpoolElapsedTime time.Duration
@@ -66,7 +66,7 @@ func TestSubpoolStopAndWait(t *testing.T) {
 	taskCount := 100000
 	maxConcurrency := 100
 
-	subpool := NewPool(1000).Subpool(maxConcurrency)
+	subpool := NewPool(1000).NewSubpool(maxConcurrency)
 
 	var executedCount atomic.Int64
 
@@ -77,14 +77,14 @@ func TestSubpoolStopAndWait(t *testing.T) {
 		})
 	}
 
-	subpool.Stop().Wait()
+	subpool.StopAndWait()
 
 	assert.Equal(t, int64(taskCount), executedCount.Load())
 }
 
 func TestSubpoolMetrics(t *testing.T) {
 	pool := NewPool(10)
-	subpool := pool.Subpool(5)
+	subpool := pool.NewSubpool(5)
 
 	sampleErr := errors.New("sample error")
 
@@ -127,7 +127,7 @@ func TestSubpoolMetrics(t *testing.T) {
 
 func TestSubpoolStop(t *testing.T) {
 	pool := NewPool(10)
-	subpool := pool.Subpool(5)
+	subpool := pool.NewSubpool(5)
 
 	var executedCount atomic.Int64
 
@@ -145,11 +145,23 @@ func TestSubpoolStop(t *testing.T) {
 
 	err := subpool.Submit(func() {}).Wait()
 
-	assert.True(t, errors.Is(err, ErrPoolStopped))
+	assert.Equal(t, ErrPoolStopped, err)
 
 	pool.StopAndWait()
 
 	err = pool.Submit(func() {}).Wait()
 
-	assert.True(t, errors.Is(err, ErrPoolStopped))
+	assert.Equal(t, ErrPoolStopped, err)
+}
+
+func TestSubpoolWithInvalidMaxConcurrency(t *testing.T) {
+	pool := NewPool(10)
+
+	assert.PanicsWithError(t, "maxConcurrency must be greater or equal to 0", func() {
+		pool.NewSubpool(-1)
+	})
+
+	assert.PanicsWithError(t, "maxConcurrency cannot be greater than the parent pool's maxConcurrency (10)", func() {
+		pool.NewSubpool(11)
+	})
 }

@@ -15,7 +15,8 @@ const DEFAULT_TASKS_CHAN_LENGTH = 2048
 
 var ErrPoolStopped = errors.New("pool stopped")
 
-type MeteredPool interface {
+// basePool is the base interface for all pool types.
+type basePool interface {
 	// Returns the number of worker goroutines that are currently active (executing a task) in the pool.
 	RunningWorkers() int64
 
@@ -33,48 +34,35 @@ type MeteredPool interface {
 
 	// Returns the total number of tasks that have completed (either successfully or with an error).
 	CompletedTasks() uint64
-}
-
-/**
- * Interface implemented by all worker pools in this library.
- * @param O The type of the output of the tasks submitted to the pool
- */
-type abstractPool interface {
-	MeteredPool
-
-	// Returns the context associated with this pool.
-	Context() context.Context
 
 	// Returns the maximum concurrency of the pool.
 	MaxConcurrency() int
 
-	// Runs the task
-	Go(task func()) error
+	// Returns the context associated with this pool.
+	Context() context.Context
 
 	// Stops the pool and returns a future that can be used to wait for all tasks pending to complete.
-	Stop() TaskFuture
+	Stop() Task
 
 	// Stops the pool and waits for all tasks to complete.
 	StopAndWait()
 }
 
+// Represents a pool of goroutines that can execute tasks concurrently.
 type Pool interface {
-	abstractPool
+	basePool
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
-	Submit(task func()) TaskFuture
+	Submit(task func()) Task
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
-	SubmitErr(task func() error) TaskFuture
+	SubmitErr(task func() error) Task
 
 	// Creates a new subpool with the specified maximum concurrency.
-	Subpool(maxConcurrency int) Pool
+	NewSubpool(maxConcurrency int) Pool
 
 	// Creates a new task group.
-	Group(tasks ...func()) TaskGroup
-
-	// Creates a new task group.
-	GroupErr(tasks ...func() error) TaskGroup
+	NewGroup() TaskGroup
 }
 
 // pool is an implementation of the Pool interface.
@@ -131,26 +119,30 @@ func (p *pool) updateMetrics(err error) {
 }
 
 func (p *pool) Go(task func()) error {
-	err := p.dispatcher.Write(task)
-	if err == dispatcher.ErrDispatcherClosed {
-		return ErrPoolStopped
+	if err := p.dispatcher.Write(task); err != nil {
+		if err == dispatcher.ErrDispatcherClosed {
+			return ErrPoolStopped
+		} else {
+			return err
+		}
 	}
-	return err
+
+	return nil
 }
 
-func (p *pool) Submit(task func()) TaskFuture {
+func (p *pool) Submit(task func()) Task {
 	return p.submit(task)
 }
 
-func (p *pool) SubmitErr(task func() error) TaskFuture {
+func (p *pool) SubmitErr(task func() error) Task {
 	return p.submit(task)
 }
 
-func (p *pool) submit(task any) TaskFuture {
+func (p *pool) submit(task any) Task {
 
 	future, resolve := future.NewFuture(p.Context())
 
-	wrapped := wrapTask(task, resolve)
+	wrapped := wrapTask[struct{}, func(error)](task, resolve)
 
 	if err := p.dispatcher.Write(wrapped); err != nil {
 		if err == dispatcher.ErrDispatcherClosed {
@@ -158,13 +150,12 @@ func (p *pool) submit(task any) TaskFuture {
 		} else {
 			resolve(err)
 		}
-		return future
 	}
 
 	return future
 }
 
-func (p *pool) Stop() TaskFuture {
+func (p *pool) Stop() Task {
 	return Submit(func() {
 		p.dispatcher.CloseAndWait()
 
@@ -174,21 +165,16 @@ func (p *pool) Stop() TaskFuture {
 	})
 }
 
-// StopAndWait stops the pool and waits for all tasks to complete.
 func (p *pool) StopAndWait() {
 	p.Stop().Wait()
 }
 
-func (p *pool) Subpool(maxConcurrency int) Pool {
+func (p *pool) NewSubpool(maxConcurrency int) Pool {
 	return newSubpool(maxConcurrency, p.ctx, p)
 }
 
-func (p *pool) Group(tasks ...func()) TaskGroup {
-	return newTaskGroup(p).Submit(tasks...)
-}
-
-func (p *pool) GroupErr(tasks ...func() error) TaskGroup {
-	return newTaskGroup(p).SubmitErr(tasks...)
+func (p *pool) NewGroup() TaskGroup {
+	return newTaskGroup(p)
 }
 
 func (p *pool) dispatch(incomingTasks []any) {
@@ -274,7 +260,7 @@ func (p *pool) worker() {
 	}
 }
 
-func newPool(maxConcurrency int, ctx context.Context) *pool {
+func newPool(maxConcurrency int, options ...Option) *pool {
 
 	if maxConcurrency == 0 {
 		maxConcurrency = math.MaxInt
@@ -290,10 +276,14 @@ func newPool(maxConcurrency int, ctx context.Context) *pool {
 	}
 
 	pool := &pool{
-		ctx:            ctx,
+		ctx:            context.Background(),
 		maxConcurrency: maxConcurrency,
 		tasks:          make(chan any, tasksLen),
 		tasksLen:       tasksLen,
+	}
+
+	for _, option := range options {
+		option(pool)
 	}
 
 	pool.dispatcher = dispatcher.NewDispatcher(pool.ctx, pool.dispatch, tasksLen)
@@ -302,6 +292,6 @@ func newPool(maxConcurrency int, ctx context.Context) *pool {
 }
 
 // NewPool creates a new pool with the specified maximum concurrency and options.
-func NewPool(maxConcurrency int) Pool {
-	return newPool(maxConcurrency, context.Background())
+func NewPool(maxConcurrency int, options ...Option) Pool {
+	return newPool(maxConcurrency, options...)
 }

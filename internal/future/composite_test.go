@@ -25,7 +25,8 @@ func TestCompositeFutureWait(t *testing.T) {
 }
 
 func TestCompositeFutureWaitWithError(t *testing.T) {
-	future, resolve := NewCompositeFuture[string](context.Background(), 3)
+	future, resolve := NewCompositeFuture[string](context.Background(), 1)
+	future.Add(2)
 
 	sampleErr := errors.New("sample error")
 	resolve(0, "output1", nil)
@@ -54,29 +55,38 @@ func TestCompositeFutureWaitWithCanceledContext(t *testing.T) {
 func TestCompositeFutureResolveWithIndexOutOfRange(t *testing.T) {
 	_, resolve := NewCompositeFuture[string](context.Background(), 2)
 
-	var thrownPanic interface{}
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				thrownPanic = r
-			}
-		}()
+	assert.PanicsWithError(t, "index must be less than 2", func() {
 		resolve(2, "output1", nil)
-	}()
+	})
 
-	assert.True(t, thrownPanic != nil)
-	assert.Equal(t, "index must be less than 2", thrownPanic.(error).Error())
+	assert.PanicsWithError(t, "index must be greater than or equal to 0", func() {
+		resolve(-1, "output1", nil)
+	})
+}
 
-	var thrownPanic2 interface{}
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				thrownPanic2 = r
-			}
-		}()
-		resolve(-1, "output2", nil)
-	}()
+func TestCompositeFutureAddWithInvalidCount(t *testing.T) {
+	future, _ := NewCompositeFuture[string](context.Background(), 2)
 
-	assert.True(t, thrownPanic2 != nil)
-	assert.Equal(t, "index must be greater than or equal to 0", thrownPanic2.(error).Error())
+	assert.PanicsWithError(t, "delta must be greater than 0", func() {
+		future.Add(0)
+	})
+}
+
+func TestCompositeFutureAdd(t *testing.T) {
+	future, resolve := NewCompositeFuture[string](context.Background(), 2)
+
+	resolve(0, "output1", nil)
+
+	future.Add(1)
+
+	resolve(1, "output2", nil)
+	resolve(2, "output3", nil)
+
+	outputs, err := future.Wait()
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 3, len(outputs))
+	assert.Equal(t, "output1", outputs[0])
+	assert.Equal(t, "output2", outputs[1])
+	assert.Equal(t, "output3", outputs[2])
 }

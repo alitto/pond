@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alitto/pond/v2/internal/assert"
 )
@@ -52,4 +53,36 @@ func TestValueFutureWaitWithCanceledContext(t *testing.T) {
 
 	assert.Equal(t, context.Canceled, err)
 	assert.Equal(t, 0, out)
+}
+
+func TestValueFutureDone(t *testing.T) {
+
+	ctx := context.Background()
+
+	future, resolve := NewValueFuture[int](ctx)
+
+	go func() {
+		time.Sleep(1 * time.Millisecond)
+		resolve(10, nil)
+	}()
+
+	<-future.Done()
+
+	value, err := future.Result()
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 10, value)
+}
+
+func TestValueFutureResolutionError(t *testing.T) {
+
+	resolution := &valueFutureResolution[int]{
+		err: errors.New("sample error"),
+	}
+
+	assert.Equal(t, "sample error", resolution.Error())
+
+	resolution = &valueFutureResolution[int]{}
+
+	assert.Equal(t, "future resolved: 0", resolution.Error())
 }

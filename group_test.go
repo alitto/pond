@@ -2,22 +2,21 @@ package pond
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/alitto/pond/v2/internal/assert"
 )
 
-func TestGenericTaskGroupWait(t *testing.T) {
+func TestResultTaskGroupWait(t *testing.T) {
 
-	pool := WithResult[int]()
+	pool := NewResultPool[int](10)
 
-	group := pool.Group()
+	group := pool.NewGroup()
 
 	for i := 0; i < 5; i++ {
-		group.SubmitErr(func() (int, error) {
-			return i, nil
+		group.Submit(func() int {
+			return i
 		})
 	}
 
@@ -32,9 +31,10 @@ func TestGenericTaskGroupWait(t *testing.T) {
 	assert.Equal(t, 4, outputs[4])
 }
 
-func TestGenericTaskGroupWaitWithError(t *testing.T) {
+func TestResultTaskGroupWaitWithError(t *testing.T) {
 
-	group := WithResult[int]().Group()
+	group := NewResultPool[int](10).
+		NewGroup()
 
 	sampleErr := errors.New("sample error")
 
@@ -56,11 +56,11 @@ func TestGenericTaskGroupWaitWithError(t *testing.T) {
 	assert.Equal(t, 0, len(outputs))
 }
 
-func TestGenericTaskGroupWaitWithMultipleErrors(t *testing.T) {
+func TestResultTaskGroupWaitWithMultipleErrors(t *testing.T) {
 
-	pool := WithResult[int]()
+	pool := NewResultPool[int](10)
 
-	group := pool.Group()
+	group := pool.NewGroup()
 
 	sampleErr := errors.New("sample error")
 
@@ -79,57 +79,39 @@ func TestGenericTaskGroupWaitWithMultipleErrors(t *testing.T) {
 	assert.Equal(t, sampleErr, err)
 }
 
-func TestGenericTaskGroupWaitAll(t *testing.T) {
-
-	pool := WithResult[int]()
-
-	group := pool.Group()
-	groupAll := pool.Group()
-
-	for i := 0; i < 5; i++ {
-		task := func() (int, error) {
-			if i%2 == 0 {
-				return 0, fmt.Errorf("error %d", i)
-			}
-			return i, nil
-		}
-		group.SubmitErr(task)
-		groupAll.SubmitErr(task)
-	}
-
-	results, err := group.Wait()
-
-	assert.True(t, err != nil)
-	assert.Equal(t, 0, len(results))
-	assert.True(t, strings.Contains(err.Error(), "error"))
-
-	resultsAll, err := groupAll.WaitAll()
-
-	assert.True(t, err != nil)
-	assert.Equal(t, 5, len(resultsAll))
-	assert.Equal(t, 0, resultsAll[0].Output)
-	assert.Equal(t, 1, resultsAll[1].Output)
-	assert.Equal(t, 0, resultsAll[2].Output)
-	assert.Equal(t, 3, resultsAll[3].Output)
-	assert.Equal(t, 0, resultsAll[4].Output)
-	assert.Equal(t, "error 0", resultsAll[0].Err.Error())
-	assert.Equal(t, "error 2", resultsAll[2].Err.Error())
-	assert.Equal(t, "error 4", resultsAll[4].Err.Error())
-}
-
 func TestTaskGroupWithStoppedPool(t *testing.T) {
 
 	pool := NewPool(100)
 
 	pool.StopAndWait()
 
-	err := pool.Group().Submit(func() {}).Wait()
+	err := pool.NewGroup().Submit(func() {}).Wait()
 
-	assert.True(t, errors.Is(err, ErrPoolStopped))
+	assert.Equal(t, ErrPoolStopped, err)
+}
 
-	taskErrors, err := pool.Group().Submit(func() {}).WaitAll()
+func TestTaskGroupDone(t *testing.T) {
 
-	assert.True(t, errors.Is(err, ErrPoolStopped))
-	assert.Equal(t, 1, len(taskErrors))
-	assert.Equal(t, ErrPoolStopped, taskErrors[0])
+	pool := NewResultPool[int](10)
+
+	group := pool.NewGroup()
+
+	for i := 0; i < 5; i++ {
+		group.SubmitErr(func() (int, error) {
+			time.Sleep(1 * time.Millisecond)
+			return i, nil
+		})
+	}
+
+	<-group.Done()
+
+	outputs, err := group.Wait()
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 5, len(outputs))
+	assert.Equal(t, 0, outputs[0])
+	assert.Equal(t, 1, outputs[1])
+	assert.Equal(t, 2, outputs[2])
+	assert.Equal(t, 3, outputs[3])
+	assert.Equal(t, 4, outputs[4])
 }

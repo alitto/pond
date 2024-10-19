@@ -8,9 +8,9 @@ import (
 	"github.com/alitto/pond/v2/internal/assert"
 )
 
-func TestGenericPoolSubmitAndWait(t *testing.T) {
+func TestResultPoolSubmitAndWait(t *testing.T) {
 
-	pool := WithResult[int]().NewPool(1000)
+	pool := NewResultPool[int](1000)
 	defer pool.StopAndWait()
 
 	task := pool.Submit(func() int {
@@ -23,9 +23,9 @@ func TestGenericPoolSubmitAndWait(t *testing.T) {
 	assert.Equal(t, 5, output)
 }
 
-func TestGenericPoolSubmitTaskWithPanic(t *testing.T) {
+func TestResultPoolSubmitTaskWithPanic(t *testing.T) {
 
-	pool := WithResult[int]().NewPool(1000)
+	pool := NewResultPool[int](1000)
 
 	task := pool.Submit(func() int {
 		panic("dummy panic")
@@ -38,9 +38,9 @@ func TestGenericPoolSubmitTaskWithPanic(t *testing.T) {
 	assert.Equal(t, 0, output)
 }
 
-func TestGenericPoolMetrics(t *testing.T) {
+func TestResultPoolMetrics(t *testing.T) {
 
-	pool := WithResult[int]().NewPool(1000)
+	pool := NewResultPool[int](1000)
 
 	// Assert counters
 	assert.Equal(t, int64(0), pool.RunningWorkers())
@@ -72,4 +72,35 @@ func TestGenericPoolMetrics(t *testing.T) {
 	assert.Equal(t, uint64(taskCount), pool.CompletedTasks())
 	assert.Equal(t, uint64(taskCount/2), pool.FailedTasks())
 	assert.Equal(t, uint64(taskCount/2), pool.SuccessfulTasks())
+}
+
+func TestResultPoolSubpool(t *testing.T) {
+
+	pool := NewResultPool[int](1000)
+	subpool := pool.NewSubpool(10)
+
+	var executedCount atomic.Int64
+
+	for i := 0; i < 100; i++ {
+		subpool.SubmitErr(func() (int, error) {
+			executedCount.Add(1)
+			return i, nil
+		})
+	}
+
+	subpool.StopAndWait()
+
+	assert.Equal(t, int64(100), executedCount.Load())
+}
+
+func TestResultSubpoolWithInvalidMaxConcurrency(t *testing.T) {
+	pool := NewResultPool[int](10)
+
+	assert.PanicsWithError(t, "maxConcurrency must be greater or equal to 0", func() {
+		pool.NewSubpool(-1)
+	})
+
+	assert.PanicsWithError(t, "maxConcurrency cannot be greater than the parent pool's maxConcurrency (10)", func() {
+		pool.NewSubpool(11)
+	})
 }

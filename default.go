@@ -1,32 +1,24 @@
 package pond
 
-import (
-	"context"
-)
-
 // defaultPool is the default pool used by the package-level functions.
-var defaultPool = newPool(0, context.Background())
+var defaultPool = newPool(0)
 
-func Go(task func()) {
-	defaultPool.Go(task)
-}
-
-func Submit(task func()) TaskFuture {
+// Submit submits a task to the default pool and returns a future that can be used to wait for the task to complete.
+func Submit(task func()) Task {
 	return defaultPool.Submit(task)
 }
 
-func SubmitErr(task func() error) TaskFuture {
+// SubmitErr submits a task to the default pool and returns a future that can be used to wait for the task to complete.
+func SubmitErr(task func() error) Task {
 	return defaultPool.SubmitErr(task)
 }
 
-func Group(tasks ...func()) TaskGroup {
-	return defaultPool.Group(tasks...)
+// NewGroup creates a new task group with the default pool.
+func NewGroup() TaskGroup {
+	return defaultPool.NewGroup()
 }
 
-func GroupErr(tasks ...func() error) TaskGroup {
-	return defaultPool.GroupErr(tasks...)
-}
-
-func Subpool(maxConcurrency int) Pool {
-	return defaultPool.Subpool(maxConcurrency)
+// NewSubpool creates a new subpool with the default pool.
+func NewSubpool(maxConcurrency int) Pool {
+	return defaultPool.NewSubpool(maxConcurrency)
 }

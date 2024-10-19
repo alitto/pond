@@ -6,41 +6,68 @@ import (
 	"github.com/alitto/pond/v2/internal/future"
 )
 
-/**
- * TaskGroup is a collection of tasks that can be submitted to a pool.
- * The tasks are executed concurrently and the results are collected in the order they are received.
- */
+// TaskGroup represents a group of tasks that can be executed concurrently.
+// The group can be waited on to block until all tasks have completed.
+// If any of the tasks return an error, the group will return the first error encountered.
 type TaskGroup interface {
+
+	// Submits a task to the group.
 	Submit(tasks ...func()) TaskGroup
+
+	// Submits a task to the group that can return an error.
 	SubmitErr(tasks ...func() error) TaskGroup
+
+	// Waits for all tasks in the group to complete.
 	Wait() error
-	WaitAll() ([]error, error)
+
+	// Done returns a channel that is closed when all tasks in the group have completed.
+	Done() <-chan struct{}
 }
 
-type GenericTaskGroup[O any] interface {
-	Submit(tasks ...func() O) GenericTaskGroup[O]
-	SubmitErr(tasks ...func() (O, error)) GenericTaskGroup[O]
+// ResultTaskGroup represents a group of tasks that can be executed concurrently.
+// As opposed to TaskGroup, the tasks in a ResultTaskGroup yield a result.
+// The group can be waited on to block until all tasks have completed.
+// If any of the tasks return an error, the group will return the first error encountered.
+type ResultTaskGroup[O any] interface {
+
+	// Submits a task to the group.
+	Submit(tasks ...func() O) ResultTaskGroup[O]
+
+	// Submits a task to the group that can return an error.
+	SubmitErr(tasks ...func() (O, error)) ResultTaskGroup[O]
+
+	// Waits for all tasks in the group to complete.
 	Wait() ([]O, error)
-	WaitAll() ([]*Result[O], error)
+
+	// Done returns a channel that is closed when all tasks in the group have completed.
+	Done() <-chan struct{}
 }
 
-type Result[O any] struct {
+type result[O any] struct {
 	Output O
 	Err    error
 }
 
-type abstractTaskGroup[T TaskFunc[O], E TaskFunc[O], O any] struct {
-	pool  abstractPool
-	mutex sync.Mutex
-	tasks []any
+type abstractTaskGroup[T func() | func() O, E func() error | func() (O, error), O any] struct {
+	pool           *pool
+	mutex          sync.Mutex
+	nextIndex      int
+	future         *future.CompositeFuture[*result[O]]
+	futureResolver future.CompositeFutureResolver[*result[O]]
 }
 
 func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E, O] {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
+	if len(tasks) == 0 {
+		return g
+	}
+
+	g.future.Add(len(tasks))
+
 	for _, task := range tasks {
-		g.tasks = append(g.tasks, task)
+		g.submit(task)
 	}
 
 	return g
@@ -50,67 +77,41 @@ func (g *abstractTaskGroup[T, E, O]) SubmitErr(tasks ...E) *abstractTaskGroup[T,
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
+	if len(tasks) == 0 {
+		return g
+	}
+
+	g.future.Add(len(tasks))
+
 	for _, task := range tasks {
-		g.tasks = append(g.tasks, task)
+		g.submit(task)
 	}
 
 	return g
 }
 
-func (g *abstractTaskGroup[T, E, O]) submit() ResultFuture[[]O] {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
+func (g *abstractTaskGroup[T, E, O]) submit(task any) {
+	index := g.nextIndex
+	g.nextIndex++
 
-	future, resolve := future.NewCompositeFuture[O](g.pool.Context(), len(g.tasks))
+	err := g.pool.Go(func() {
+		output, err := invokeTask[O](task)
 
-	for i, task := range g.tasks {
-		index := i
-		err := g.pool.Go(func() {
-			output, err := invokeTask[O](task)
+		g.futureResolver(index, &result[O]{
+			Output: output,
+			Err:    err,
+		}, err)
+	})
 
-			resolve(index, output, err)
-		})
-
-		if err != nil {
-			var zero O
-			resolve(index, zero, err)
-		}
+	if err != nil {
+		g.futureResolver(index, &result[O]{
+			Err: err,
+		}, err)
 	}
-
-	// Reset tasks
-	g.tasks = g.tasks[:0]
-
-	return future
 }
 
-func (g *abstractTaskGroup[T, E, O]) submitAll() ResultFuture[[]*Result[O]] {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-
-	future, resolve := future.NewCompositeFuture[*Result[O]](g.pool.Context(), len(g.tasks))
-
-	for i, task := range g.tasks {
-		index := i
-		err := g.pool.Go(func() {
-			output, err := invokeTask[O](task)
-
-			resolve(index, &Result[O]{
-				Output: output,
-				Err:    err,
-			}, nil)
-		})
-
-		if err != nil {
-			resolve(index, &Result[O]{
-				Err: err,
-			}, nil)
-		}
-	}
-
-	// Reset tasks
-	g.tasks = g.tasks[:0]
-
-	return future
+func (g *abstractTaskGroup[T, E, O]) Done() <-chan struct{} {
+	return g.future.Done()
 }
 
 type taskGroup struct {
@@ -128,73 +129,60 @@ func (g *taskGroup) SubmitErr(tasks ...func() error) TaskGroup {
 }
 
 func (g *taskGroup) Wait() error {
-	_, err := g.abstractTaskGroup.submit().Wait()
+	_, err := g.future.Wait()
 	return err
 }
 
-func (g *taskGroup) WaitAll() ([]error, error) {
-	results, err := g.submitAll().Wait()
-
-	errors := make([]error, len(results))
-
-	for i, result := range results {
-		// Get the first error
-		if err == nil && result.Err != nil {
-			err = result.Err
-		}
-
-		errors[i] = result.Err
-	}
-
-	return errors, err
-}
-
-type genericTaskGroup[O any] struct {
+type resultTaskGroup[O any] struct {
 	abstractTaskGroup[func() O, func() (O, error), O]
 }
 
-func (g *genericTaskGroup[O]) Submit(tasks ...func() O) GenericTaskGroup[O] {
+func (g *resultTaskGroup[O]) Submit(tasks ...func() O) ResultTaskGroup[O] {
 	g.abstractTaskGroup.Submit(tasks...)
 	return g
 }
 
-func (g *genericTaskGroup[O]) SubmitErr(tasks ...func() (O, error)) GenericTaskGroup[O] {
+func (g *resultTaskGroup[O]) SubmitErr(tasks ...func() (O, error)) ResultTaskGroup[O] {
 	g.abstractTaskGroup.SubmitErr(tasks...)
 	return g
 }
 
-func (g *genericTaskGroup[O]) Wait() ([]O, error) {
-	return g.abstractTaskGroup.submit().Wait()
-}
+func (g *resultTaskGroup[O]) Wait() ([]O, error) {
+	results, err := g.future.Wait()
 
-func (g *genericTaskGroup[O]) WaitAll() ([]*Result[O], error) {
-	results, err := g.submitAll().Wait()
-
-	if err == nil {
-		// Get the first error
-		for _, result := range results {
-			if result.Err != nil {
-				err = result.Err
-				break
-			}
-		}
+	if err != nil {
+		return []O{}, err
 	}
 
-	return results, err
+	values := make([]O, len(results))
+
+	for i, result := range results {
+		values[i] = result.Output
+	}
+
+	return values, err
 }
 
-func newTaskGroup(pool abstractPool) TaskGroup {
+func newTaskGroup(pool *pool) TaskGroup {
+	future, futureResolver := future.NewCompositeFuture[*result[struct{}]](pool.Context(), 0)
+
 	return &taskGroup{
 		abstractTaskGroup: abstractTaskGroup[func(), func() error, struct{}]{
-			pool: pool,
+			pool:           pool,
+			future:         future,
+			futureResolver: futureResolver,
 		},
 	}
 }
 
-func newGenericTaskGroup[O any](pool abstractPool) GenericTaskGroup[O] {
-	return &genericTaskGroup[O]{
+func newResultTaskGroup[O any](pool *pool) ResultTaskGroup[O] {
+	future, futureResolver := future.NewCompositeFuture[*result[O]](pool.Context(), 0)
+
+	return &resultTaskGroup[O]{
 		abstractTaskGroup: abstractTaskGroup[func() O, func() (O, error), O]{
-			pool: pool,
+			pool:           pool,
+			future:         future,
+			futureResolver: futureResolver,
 		},
 	}
 }

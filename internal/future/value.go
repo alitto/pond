@@ -14,15 +14,26 @@ type ValueFuture[V any] struct {
 	ctx context.Context
 }
 
-// Get waits for the future to complete and returns the output and any error that occurred.
-func (f *ValueFuture[V]) Wait() (V, error) {
+func (f *ValueFuture[V]) Done() <-chan struct{} {
+	return f.ctx.Done()
+}
+
+func (f *ValueFuture[V]) Result() (V, error) {
 	<-f.ctx.Done()
+
 	cause := context.Cause(f.ctx)
-	if resolution, ok := cause.(*valueFutureResolution[V]); ok {
-		return resolution.value, resolution.err
+	if cause != nil {
+		if resolution, ok := cause.(*valueFutureResolution[V]); ok {
+			return resolution.value, resolution.err
+		}
 	}
 	var zero V
 	return zero, cause
+}
+
+// Get waits for the future to complete and returns the output and any error that occurred.
+func (f *ValueFuture[V]) Wait() (V, error) {
+	return f.Result()
 }
 
 func NewValueFuture[V any](ctx context.Context) (*ValueFuture[V], ValueFutureResolver[V]) {
@@ -47,5 +58,5 @@ func (v *valueFutureResolution[V]) Error() string {
 	if v.err != nil {
 		return v.err.Error()
 	}
-	return fmt.Sprintf("future value: %v", v.value)
+	return fmt.Sprintf("future resolved: %#v", v.value)
 }

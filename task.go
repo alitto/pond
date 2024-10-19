@@ -30,43 +30,26 @@ func (t subpoolTask[R]) Run() {
 	}
 }
 
-type wrappedTask struct {
+type wrappedTask[R any, C func(error) | func(R, error)] struct {
 	task     any
-	callback func(error)
+	callback C
 }
 
-func (t wrappedTask) Run() error {
-	_, err := invokeTask[any](t.task)
+func (t wrappedTask[R, C]) Run() error {
+	result, err := invokeTask[R](t.task)
 
-	t.callback(err)
-
-	return err
-}
-
-type wrappedResultTask[R any] struct {
-	task     any
-	callback func(R, error)
-}
-
-func (t wrappedResultTask[R]) Run() error {
-	output, err := invokeTask[R](t.task)
-
-	t.callback(output, err)
-
-	return err
-}
-
-func wrapTask(task any, callback func(error)) func() error {
-	wrapped := &wrappedTask{
-		task:     task,
-		callback: callback,
+	switch c := any(t.callback).(type) {
+	case func(error):
+		c(err)
+	case func(R, error):
+		c(result, err)
 	}
 
-	return wrapped.Run
+	return err
 }
 
-func wrapResultTask[R any](task any, callback func(R, error)) func() error {
-	wrapped := &wrappedResultTask[R]{
+func wrapTask[R any, C func(error) | func(R, error)](task any, callback C) func() error {
+	wrapped := &wrappedTask[R, C]{
 		task:     task,
 		callback: callback,
 	}
