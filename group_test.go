@@ -15,6 +15,7 @@ func TestResultTaskGroupWait(t *testing.T) {
 	group := pool.NewGroup()
 
 	for i := 0; i < 5; i++ {
+		i := i
 		group.Submit(func() int {
 			return i
 		})
@@ -39,6 +40,7 @@ func TestResultTaskGroupWaitWithError(t *testing.T) {
 	sampleErr := errors.New("sample error")
 
 	for i := 0; i < 5; i++ {
+		i := i
 		if i == 3 {
 			group.SubmitErr(func() (int, error) {
 				return 0, sampleErr
@@ -65,6 +67,7 @@ func TestResultTaskGroupWaitWithMultipleErrors(t *testing.T) {
 	sampleErr := errors.New("sample error")
 
 	for i := 0; i < 5; i++ {
+		i := i
 		group.SubmitErr(func() (int, error) {
 			if i%2 == 0 {
 				return 0, sampleErr
@@ -97,6 +100,7 @@ func TestTaskGroupDone(t *testing.T) {
 	group := pool.NewGroup()
 
 	for i := 0; i < 5; i++ {
+		i := i
 		group.SubmitErr(func() (int, error) {
 			time.Sleep(1 * time.Millisecond)
 			return i, nil

@@ -89,6 +89,7 @@ func TestSubpoolMetrics(t *testing.T) {
 	sampleErr := errors.New("sample error")
 
 	for i := 0; i < 20; i++ {
+		i := i
 		if i%2 == 0 {
 			subpool.SubmitErr(func() error {
 				if i%4 == 0 {

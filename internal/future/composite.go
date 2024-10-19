@@ -50,15 +50,15 @@ func (f *CompositeFuture[V]) Add(delta int) {
 }
 
 func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
 	if index < 0 {
 		panic(fmt.Errorf("index must be greater than or equal to 0"))
 	}
 	if index >= f.count {
 		panic(fmt.Errorf("index must be less than %d", f.count))
 	}
-
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
 
 	// Save the resolution
 	f.resolutions = append(f.resolutions, compositeResolution[V]{

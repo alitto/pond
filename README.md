@@ -68,9 +68,9 @@ func main() {
 
 	// Submit 1000 tasks
 	for i := 0; i < 1000; i++ {
-		n := i
+		i := i
 		pool.Submit(func() {
-			fmt.Printf("Running task #%d\n", n)
+			fmt.Printf("Running task #%d\n", i)
 		})
 	}
 
@@ -189,12 +189,12 @@ group := pool.Group()
 
 // Submit a group of tasks
 for i := 0; i < 20; i++ {
-	n := i
+	i := i
 	group.SubmitErr(func() error {
 		if n == 10 {
 			return errors.New("An error occurred")
 		}
-		fmt.Printf("Running group task #%d\n", n)
+		fmt.Printf("Running group task #%d\n", i)
 		return nil
 	})
 }

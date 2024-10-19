@@ -54,11 +54,11 @@ func TestResultPoolMetrics(t *testing.T) {
 	var executedCount atomic.Int64
 
 	for i := 0; i < taskCount; i++ {
-		n := i
+		i := i
 		pool.SubmitErr(func() (int, error) {
 			executedCount.Add(1)
-			if n%2 == 0 {
-				return n, nil
+			if i%2 == 0 {
+				return i, nil
 			}
 			return 0, errors.New("sample error")
 		})
@@ -82,6 +82,7 @@ func TestResultPoolSubpool(t *testing.T) {
 	var executedCount atomic.Int64
 
 	for i := 0; i < 100; i++ {
+		i := i
 		subpool.SubmitErr(func() (int, error) {
 			executedCount.Add(1)
 			return i, nil

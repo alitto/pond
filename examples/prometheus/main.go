@@ -83,9 +83,9 @@ func submitTasks(pool pond.Pool) {
 
 	// Submit 1000 tasks
 	for i := 0; i < 1000; i++ {
-		n := i
+		i := i
 		pool.Submit(func() {
-			fmt.Printf("Running task #%d\n", n)
+			fmt.Printf("Running task #%d\n", i)
 			time.Sleep(500 * time.Millisecond)
 		})
 	}

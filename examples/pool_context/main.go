@@ -29,6 +29,7 @@ func main() {
 	// Submit several long runnning tasks
 	var count int = 100
 	for i := 0; i < count; i++ {
+		i := i
 		pool.Submit(func() {
 			fmt.Printf("Task #%d started\n", i)
 			time.Sleep(3 * time.Second)
