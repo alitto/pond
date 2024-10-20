@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/alitto/pond"
+	"github.com/alitto/pond/v2"
 )
 
 // Pressing Ctrl+C while this program is running will cause the program to terminate gracefully.
@@ -18,18 +18,30 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	go func() {
+		<-ctx.Done()
+		fmt.Println("Ctrl+C pressed, stopping the pool...")
+	}()
+
 	// Create a pool and pass the context to it.
-	pool := pond.New(1, 1000, pond.Context(ctx))
-	defer pool.StopAndWait()
+	pool := pond.NewPool(10, pond.WithContext(ctx))
 
 	// Submit several long runnning tasks
 	var count int = 100
 	for i := 0; i < count; i++ {
-		n := i
+		i := i
 		pool.Submit(func() {
-			fmt.Printf("Task #%d started\n", n)
-			time.Sleep(1 * time.Second)
-			fmt.Printf("Task #%d finished\n", n)
+			fmt.Printf("Task #%d started\n", i)
+			time.Sleep(3 * time.Second)
+			fmt.Printf("Task #%d finished\n", i)
 		})
+	}
+
+	// Stop the pool and wait for all running tasks to finish
+	err := pool.Stop().Wait()
+	if err != nil {
+		fmt.Printf("Pool stopped with error: %v\n", err)
+	} else {
+		fmt.Println("Pool stopped gracefully")
 	}
 }

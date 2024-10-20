@@ -1,106 +1,188 @@
 package pond
 
 import (
-	"context"
 	"sync"
+
+	"github.com/alitto/pond/v2/internal/future"
 )
 
-// TaskGroup represents a group of related tasks
-type TaskGroup struct {
-	pool      *WorkerPool
-	waitGroup sync.WaitGroup
+// TaskGroup represents a group of tasks that can be executed concurrently.
+// The group can be waited on to block until all tasks have completed.
+// If any of the tasks return an error, the group will return the first error encountered.
+type TaskGroup interface {
+
+	// Submits a task to the group.
+	Submit(tasks ...func()) TaskGroup
+
+	// Submits a task to the group that can return an error.
+	SubmitErr(tasks ...func() error) TaskGroup
+
+	// Waits for all tasks in the group to complete.
+	Wait() error
+
+	// Done returns a channel that is closed when all tasks in the group have completed.
+	Done() <-chan struct{}
 }
 
-// Submit adds a task to this group and sends it to the worker pool to be executed
-func (g *TaskGroup) Submit(task func()) {
-	g.waitGroup.Add(1)
+// ResultTaskGroup represents a group of tasks that can be executed concurrently.
+// As opposed to TaskGroup, the tasks in a ResultTaskGroup yield a result.
+// The group can be waited on to block until all tasks have completed.
+// If any of the tasks return an error, the group will return the first error encountered.
+type ResultTaskGroup[O any] interface {
 
-	g.pool.Submit(func() {
-		defer g.waitGroup.Done()
+	// Submits a task to the group.
+	Submit(tasks ...func() O) ResultTaskGroup[O]
 
-		task()
-	})
+	// Submits a task to the group that can return an error.
+	SubmitErr(tasks ...func() (O, error)) ResultTaskGroup[O]
+
+	// Waits for all tasks in the group to complete.
+	Wait() ([]O, error)
+
+	// Done returns a channel that is closed when all tasks in the group have completed.
+	Done() <-chan struct{}
 }
 
-// Wait waits until all the tasks in this group have completed
-func (g *TaskGroup) Wait() {
-
-	// Wait for all tasks to complete
-	g.waitGroup.Wait()
+type result[O any] struct {
+	Output O
+	Err    error
 }
 
-// TaskGroupWithContext represents a group of related tasks associated to a context
-type TaskGroupWithContext struct {
-	TaskGroup
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	errSync struct {
-		once  sync.Once
-		guard sync.RWMutex
-	}
-	err error
+type abstractTaskGroup[T func() | func() O, E func() error | func() (O, error), O any] struct {
+	pool           *pool
+	mutex          sync.Mutex
+	nextIndex      int
+	future         *future.CompositeFuture[*result[O]]
+	futureResolver future.CompositeFutureResolver[*result[O]]
 }
 
-// Submit adds a task to this group and sends it to the worker pool to be executed
-func (g *TaskGroupWithContext) Submit(task func() error) {
-	g.waitGroup.Add(1)
+func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E, O] {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
 
-	g.pool.Submit(func() {
-		defer g.waitGroup.Done()
-
-		// If context has already been cancelled, skip task execution
-		select {
-		case <-g.ctx.Done():
-			return
-		default:
-		}
-
-		// don't actually ignore errors
-		err := task()
-		if err != nil {
-			g.setError(err)
-		}
-	})
-}
-
-// Wait blocks until either all the tasks submitted to this group have completed,
-// one of them returned a non-nil error or the context associated to this group
-// was canceled.
-func (g *TaskGroupWithContext) Wait() error {
-
-	// Wait for all tasks to complete
-	tasksCompleted := make(chan struct{})
-	go func() {
-		g.waitGroup.Wait()
-		tasksCompleted <- struct{}{}
-	}()
-
-	select {
-	case <-tasksCompleted:
-		// If context was provided, cancel it to signal all running tasks to stop
-		g.cancel()
-	case <-g.ctx.Done():
-		g.setError(g.ctx.Err())
+	if len(tasks) == 0 {
+		return g
 	}
 
-	return g.getError()
+	g.future.Add(len(tasks))
+
+	for _, task := range tasks {
+		g.submit(task)
+	}
+
+	return g
 }
 
-func (g *TaskGroupWithContext) getError() error {
-	g.errSync.guard.RLock()
-	err := g.err
-	g.errSync.guard.RUnlock()
+func (g *abstractTaskGroup[T, E, O]) SubmitErr(tasks ...E) *abstractTaskGroup[T, E, O] {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
+	if len(tasks) == 0 {
+		return g
+	}
+
+	g.future.Add(len(tasks))
+
+	for _, task := range tasks {
+		g.submit(task)
+	}
+
+	return g
+}
+
+func (g *abstractTaskGroup[T, E, O]) submit(task any) {
+	index := g.nextIndex
+	g.nextIndex++
+
+	err := g.pool.Go(func() {
+		output, err := invokeTask[O](task)
+
+		g.futureResolver(index, &result[O]{
+			Output: output,
+			Err:    err,
+		}, err)
+	})
+
+	if err != nil {
+		g.futureResolver(index, &result[O]{
+			Err: err,
+		}, err)
+	}
+}
+
+func (g *abstractTaskGroup[T, E, O]) Done() <-chan struct{} {
+	return g.future.Done()
+}
+
+type taskGroup struct {
+	abstractTaskGroup[func(), func() error, struct{}]
+}
+
+func (g *taskGroup) Submit(tasks ...func()) TaskGroup {
+	g.abstractTaskGroup.Submit(tasks...)
+	return g
+}
+
+func (g *taskGroup) SubmitErr(tasks ...func() error) TaskGroup {
+	g.abstractTaskGroup.SubmitErr(tasks...)
+	return g
+}
+
+func (g *taskGroup) Wait() error {
+	_, err := g.future.Wait()
 	return err
 }
 
-func (g *TaskGroupWithContext) setError(err error) {
-	g.errSync.once.Do(func() {
-		g.errSync.guard.Lock()
-		g.err = err
-		g.errSync.guard.Unlock()
+type resultTaskGroup[O any] struct {
+	abstractTaskGroup[func() O, func() (O, error), O]
+}
 
-		// Cancel execution of any pending task in this group
-		g.cancel()
-	})
+func (g *resultTaskGroup[O]) Submit(tasks ...func() O) ResultTaskGroup[O] {
+	g.abstractTaskGroup.Submit(tasks...)
+	return g
+}
+
+func (g *resultTaskGroup[O]) SubmitErr(tasks ...func() (O, error)) ResultTaskGroup[O] {
+	g.abstractTaskGroup.SubmitErr(tasks...)
+	return g
+}
+
+func (g *resultTaskGroup[O]) Wait() ([]O, error) {
+	results, err := g.future.Wait()
+
+	if err != nil {
+		return []O{}, err
+	}
+
+	values := make([]O, len(results))
+
+	for i, result := range results {
+		values[i] = result.Output
+	}
+
+	return values, err
+}
+
+func newTaskGroup(pool *pool) TaskGroup {
+	future, futureResolver := future.NewCompositeFuture[*result[struct{}]](pool.Context(), 0)
+
+	return &taskGroup{
+		abstractTaskGroup: abstractTaskGroup[func(), func() error, struct{}]{
+			pool:           pool,
+			future:         future,
+			futureResolver: futureResolver,
+		},
+	}
+}
+
+func newResultTaskGroup[O any](pool *pool) ResultTaskGroup[O] {
+	future, futureResolver := future.NewCompositeFuture[*result[O]](pool.Context(), 0)
+
+	return &resultTaskGroup[O]{
+		abstractTaskGroup: abstractTaskGroup[func() O, func() (O, error), O]{
+			pool:           pool,
+			future:         future,
+			futureResolver: futureResolver,
+		},
+	}
 }
