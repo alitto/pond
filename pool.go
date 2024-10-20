@@ -3,6 +3,7 @@ package pond
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -149,10 +150,13 @@ func (p *pool) submit(task any) Task {
 
 func (p *pool) Stop() Task {
 	return Submit(func() {
+		log.Println("Closing dispatcher...")
 		p.dispatcher.CloseAndWait()
 
+		log.Println("Closing tasks channel...")
 		close(p.tasks)
 
+		log.Println("Waiting for workers to finish...")
 		p.workerWaitGroup.Wait()
 	})
 }
