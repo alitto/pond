@@ -2,7 +2,7 @@ package pond
 
 import (
 	"errors"
-	"sync"
+	"sync/atomic"
 
 	"github.com/alitto/pond/v2/internal/future"
 )
@@ -20,9 +20,6 @@ type TaskGroup interface {
 
 	// Waits for all tasks in the group to complete.
 	Wait() error
-
-	// Done returns a channel that is closed when all tasks in the group have completed.
-	Done() <-chan struct{}
 }
 
 // ResultTaskGroup represents a group of tasks that can be executed concurrently.
@@ -39,9 +36,6 @@ type ResultTaskGroup[O any] interface {
 
 	// Waits for all tasks in the group to complete.
 	Wait() ([]O, error)
-
-	// Done returns a channel that is closed when all tasks in the group have completed.
-	Done() <-chan struct{}
 }
 
 type result[O any] struct {
@@ -51,21 +45,15 @@ type result[O any] struct {
 
 type abstractTaskGroup[T func() | func() O, E func() error | func() (O, error), O any] struct {
 	pool           *pool
-	mutex          sync.Mutex
-	nextIndex      int
+	nextIndex      atomic.Int64
 	future         *future.CompositeFuture[*result[O]]
 	futureResolver future.CompositeFutureResolver[*result[O]]
 }
 
 func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E, O] {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-
 	if len(tasks) == 0 {
 		panic(errors.New("no tasks provided"))
 	}
-
-	g.future.Add(len(tasks))
 
 	for _, task := range tasks {
 		g.submit(task)
@@ -75,14 +63,9 @@ func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E,
 }
 
 func (g *abstractTaskGroup[T, E, O]) SubmitErr(tasks ...E) *abstractTaskGroup[T, E, O] {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-
 	if len(tasks) == 0 {
 		panic(errors.New("no tasks provided"))
 	}
-
-	g.future.Add(len(tasks))
 
 	for _, task := range tasks {
 		g.submit(task)
@@ -92,8 +75,7 @@ func (g *abstractTaskGroup[T, E, O]) SubmitErr(tasks ...E) *abstractTaskGroup[T,
 }
 
 func (g *abstractTaskGroup[T, E, O]) submit(task any) {
-	index := g.nextIndex
-	g.nextIndex++
+	index := int(g.nextIndex.Add(1) - 1)
 
 	err := g.pool.Go(func() {
 		output, err := invokeTask[O](task)
@@ -111,10 +93,6 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 	}
 }
 
-func (g *abstractTaskGroup[T, E, O]) Done() <-chan struct{} {
-	return g.future.Done()
-}
-
 type taskGroup struct {
 	abstractTaskGroup[func(), func() error, struct{}]
 }
@@ -130,7 +108,7 @@ func (g *taskGroup) SubmitErr(tasks ...func() error) TaskGroup {
 }
 
 func (g *taskGroup) Wait() error {
-	_, err := g.future.Wait()
+	_, err := g.future.Wait(int(g.nextIndex.Load()))
 	return err
 }
 
@@ -149,7 +127,7 @@ func (g *resultTaskGroup[O]) SubmitErr(tasks ...func() (O, error)) ResultTaskGro
 }
 
 func (g *resultTaskGroup[O]) Wait() ([]O, error) {
-	results, err := g.future.Wait()
+	results, err := g.future.Wait(int(g.nextIndex.Load()))
 
 	if err != nil {
 		return []O{}, err
@@ -165,7 +143,7 @@ func (g *resultTaskGroup[O]) Wait() ([]O, error) {
 }
 
 func newTaskGroup(pool *pool) TaskGroup {
-	future, futureResolver := future.NewCompositeFuture[*result[struct{}]](pool.Context(), 0)
+	future, futureResolver := future.NewCompositeFuture[*result[struct{}]](pool.Context())
 
 	return &taskGroup{
 		abstractTaskGroup: abstractTaskGroup[func(), func() error, struct{}]{
@@ -177,7 +155,7 @@ func newTaskGroup(pool *pool) TaskGroup {
 }
 
 func newResultTaskGroup[O any](pool *pool) ResultTaskGroup[O] {
-	future, futureResolver := future.NewCompositeFuture[*result[O]](pool.Context(), 0)
+	future, futureResolver := future.NewCompositeFuture[*result[O]](pool.Context())
 
 	return &resultTaskGroup[O]{
 		abstractTaskGroup: abstractTaskGroup[func() O, func() (O, error), O]{

@@ -3,7 +3,6 @@ package pond
 import (
 	"context"
 	"errors"
-	"log"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -52,6 +51,9 @@ type basePool interface {
 // Represents a pool of goroutines that can execute tasks concurrently.
 type Pool interface {
 	basePool
+
+	// Submits a task to the pool without waiting for it to complete.
+	Go(task func()) error
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
 	Submit(task func()) Task
@@ -150,13 +152,10 @@ func (p *pool) submit(task any) Task {
 
 func (p *pool) Stop() Task {
 	return Submit(func() {
-		log.Println("Closing dispatcher...")
 		p.dispatcher.CloseAndWait()
 
-		log.Println("Closing tasks channel...")
 		close(p.tasks)
 
-		log.Println("Waiting for workers to finish...")
 		p.workerWaitGroup.Wait()
 	})
 }
@@ -183,20 +182,24 @@ func (p *pool) dispatch(incomingTasks []any) {
 func (p *pool) dispatchTask(task any) {
 	workerCount := int(p.workerCount.Load())
 
-	if workerCount < p.tasksLen {
-		// If there are less workers than the size of the channel, start workers
-		p.startWorker()
-	}
-
 	// Attempt to submit task without blocking
 	select {
 	case p.tasks <- task:
 		// Task submitted
+
+		// If we could submit the task without blocking, it means one of two things:
+		// 1. There are idle workers (all workers are busy)
+		// 2. There are no workers
+		// In either case, we should launch a new worker if the number of workers is less than the maximum concurrency
+		if workerCount < p.maxConcurrency {
+			// Launch a new worker
+			p.startWorker()
+		}
 		return
 	default:
 	}
 
-	// There are no idle workers, create more
+	// Task queue is full, launch a new worker if the number of workers is less than the maximum concurrency
 	if workerCount < p.maxConcurrency {
 		// Launch a new worker
 		p.startWorker()

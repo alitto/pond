@@ -147,18 +147,3 @@ func TestDispatcherWriteAfterClose(t *testing.T) {
 	assert.Equal(t, uint64(0), dispatcher.WriteCount())
 	assert.Equal(t, uint64(0), dispatcher.ReadCount())
 }
-
-func TestDispatcherCloseAndWait(t *testing.T) {
-
-	ch := make(chan struct{}, 1)
-
-	close(ch)
-
-	//ch <- struct{}{}
-
-	select {
-	case out, ok := <-ch:
-		assert.Equal(t, false, ok)
-		assert.Equal(t, nil, out)
-	}
-}
