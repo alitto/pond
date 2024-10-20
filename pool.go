@@ -120,11 +120,7 @@ func (p *pool) updateMetrics(err error) {
 
 func (p *pool) Go(task func()) error {
 	if err := p.dispatcher.Write(task); err != nil {
-		if err == dispatcher.ErrDispatcherClosed {
-			return ErrPoolStopped
-		} else {
-			return err
-		}
+		return ErrPoolStopped
 	}
 
 	return nil
@@ -145,11 +141,7 @@ func (p *pool) submit(task any) Task {
 	wrapped := wrapTask[struct{}, func(error)](task, resolve)
 
 	if err := p.dispatcher.Write(wrapped); err != nil {
-		if err == dispatcher.ErrDispatcherClosed {
-			resolve(ErrPoolStopped)
-		} else {
-			resolve(err)
-		}
+		resolve(ErrPoolStopped)
 	}
 
 	return future
@@ -267,7 +259,7 @@ func newPool(maxConcurrency int, options ...Option) *pool {
 	}
 
 	if maxConcurrency <= 0 {
-		panic("maxConcurrency must be greater than 0")
+		panic(errors.New("maxConcurrency must be greater than 0"))
 	}
 
 	tasksLen := DEFAULT_TASKS_CHAN_LENGTH

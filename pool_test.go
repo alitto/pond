@@ -140,7 +140,7 @@ func TestPoolMetrics(t *testing.T) {
 
 func TestPoolSubmitOnStoppedPool(t *testing.T) {
 
-	pool := NewPool(100)
+	pool := newPool(100)
 
 	pool.Submit(func() {})
 
@@ -149,4 +149,14 @@ func TestPoolSubmitOnStoppedPool(t *testing.T) {
 	err := pool.Submit(func() {}).Wait()
 
 	assert.Equal(t, ErrPoolStopped, err)
+
+	err = pool.Go(func() {})
+
+	assert.Equal(t, ErrPoolStopped, err)
+}
+
+func TestNewPoolWithInvalidMaxConcurrency(t *testing.T) {
+	assert.PanicsWithError(t, "maxConcurrency must be greater than 0", func() {
+		NewPool(-1)
+	})
 }

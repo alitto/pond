@@ -155,7 +155,7 @@ func TestSubpoolStop(t *testing.T) {
 	assert.Equal(t, ErrPoolStopped, err)
 }
 
-func TestSubpoolWithInvalidMaxConcurrency(t *testing.T) {
+func TestSubpoolMaxConcurrency(t *testing.T) {
 	pool := NewPool(10)
 
 	assert.PanicsWithError(t, "maxConcurrency must be greater or equal to 0", func() {
@@ -165,4 +165,8 @@ func TestSubpoolWithInvalidMaxConcurrency(t *testing.T) {
 	assert.PanicsWithError(t, "maxConcurrency cannot be greater than the parent pool's maxConcurrency (10)", func() {
 		pool.NewSubpool(11)
 	})
+
+	subpool := pool.NewSubpool(0)
+
+	assert.Equal(t, 10, subpool.MaxConcurrency())
 }

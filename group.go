@@ -1,6 +1,7 @@
 package pond
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/alitto/pond/v2/internal/future"
@@ -61,7 +62,7 @@ func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E,
 	defer g.mutex.Unlock()
 
 	if len(tasks) == 0 {
-		return g
+		panic(errors.New("no tasks provided"))
 	}
 
 	g.future.Add(len(tasks))
@@ -78,7 +79,7 @@ func (g *abstractTaskGroup[T, E, O]) SubmitErr(tasks ...E) *abstractTaskGroup[T,
 	defer g.mutex.Unlock()
 
 	if len(tasks) == 0 {
-		return g
+		panic(errors.New("no tasks provided"))
 	}
 
 	g.future.Add(len(tasks))

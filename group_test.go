@@ -119,3 +119,16 @@ func TestTaskGroupDone(t *testing.T) {
 	assert.Equal(t, 3, outputs[3])
 	assert.Equal(t, 4, outputs[4])
 }
+
+func TestTaskGroupWithNoTasks(t *testing.T) {
+
+	group := NewResultPool[int](10).
+		NewGroup()
+
+	assert.PanicsWithError(t, "no tasks provided", func() {
+		group.Submit()
+	})
+	assert.PanicsWithError(t, "no tasks provided", func() {
+		group.SubmitErr()
+	})
+}
