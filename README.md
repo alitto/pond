@@ -351,7 +351,7 @@ You can find more examples in the [examples](./examples) directory.
 
 ## API Reference
 
-Full API reference is available at https://pkg.go.dev/github.com/alitto/pond
+Full API reference is available at https://pkg.go.dev/github.com/alitto/pond/v2
 
 ## Benchmarks
 
