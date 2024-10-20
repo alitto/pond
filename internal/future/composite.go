@@ -14,39 +14,83 @@ type compositeResolution[V any] struct {
 	err   error
 }
 
-type CompositeFuture[V any] struct {
-	*ValueFuture[[]V]
-	resolver    ValueFutureResolver[[]V]
-	resolutions []compositeResolution[V]
-	count       int
-	mutex       sync.Mutex
+type waitListener struct {
+	count int
+	ch    chan struct{}
 }
 
-func NewCompositeFuture[V any](ctx context.Context, count int) (*CompositeFuture[V], CompositeFutureResolver[V]) {
-	childFuture, resolver := NewValueFuture[[]V](ctx)
+type CompositeFuture[V any] struct {
+	ctx         context.Context
+	cancel      context.CancelCauseFunc
+	resolutions []compositeResolution[V]
+	mutex       sync.Mutex
+	listeners   []waitListener
+}
+
+func NewCompositeFuture[V any](ctx context.Context) (*CompositeFuture[V], CompositeFutureResolver[V]) {
+	childCtx, cancel := context.WithCancelCause(ctx)
 
 	future := &CompositeFuture[V]{
-		ValueFuture: childFuture,
-		resolver:    resolver,
+		ctx:         childCtx,
+		cancel:      cancel,
 		resolutions: make([]compositeResolution[V], 0),
-	}
-
-	if count > 0 {
-		future.Add(count)
 	}
 
 	return future, future.resolve
 }
 
-func (f *CompositeFuture[V]) Add(delta int) {
-	if delta <= 0 {
-		panic(fmt.Errorf("delta must be greater than 0"))
-	}
-
+func (f *CompositeFuture[V]) Wait(count int) ([]V, error) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	f.count += delta
+	err := context.Cause(f.ctx)
+
+	if len(f.resolutions) >= count || err != nil {
+		if err != nil {
+			return []V{}, err
+		}
+
+		// Get sorted results
+		result := make([]V, count)
+		for _, resolution := range f.resolutions {
+			if resolution.index < count {
+				result[resolution.index] = resolution.value
+			}
+		}
+
+		return result, nil
+	}
+
+	// Register a listener
+	ch := make(chan struct{})
+	f.listeners = append(f.listeners, waitListener{
+		count: count,
+		ch:    ch,
+	})
+
+	f.mutex.Unlock()
+
+	// Wait for the listener to be notified or the context to be canceled
+	select {
+	case <-ch:
+	case <-f.ctx.Done():
+	}
+
+	f.mutex.Lock()
+
+	if err := context.Cause(f.ctx); err != nil {
+		return []V{}, err
+	}
+
+	// Get sorted results
+	result := make([]V, count)
+	for _, resolution := range f.resolutions {
+		if resolution.index < count {
+			result[resolution.index] = resolution.value
+		}
+	}
+
+	return result, nil
 }
 
 func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
@@ -56,9 +100,6 @@ func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
 	if index < 0 {
 		panic(fmt.Errorf("index must be greater than or equal to 0"))
 	}
-	if index >= f.count {
-		panic(fmt.Errorf("index must be less than %d", f.count))
-	}
 
 	// Save the resolution
 	f.resolutions = append(f.resolutions, compositeResolution[V]{
@@ -67,20 +108,19 @@ func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
 		err:   err,
 	})
 
-	pending := f.count - len(f.resolutions)
+	// Cancel the context if an error occurred
+	if err != nil {
+		f.cancel(err)
+	}
 
-	if pending == 0 || err != nil {
-		if err != nil {
-			f.resolver([]V{}, err)
-		} else {
+	// Notify listeners
+	for i := 0; i < len(f.listeners); i++ {
+		listener := f.listeners[i]
 
-			// Sort the resolutions
-			values := make([]V, f.count)
-			for _, resolution := range f.resolutions {
-				values[resolution.index] = resolution.value
-			}
-
-			f.resolver(values, nil)
+		if err != nil || listener.count <= len(f.resolutions) {
+			close(listener.ch)
+			f.listeners = append(f.listeners[:i], f.listeners[i+1:]...)
+			i--
 		}
 	}
 }

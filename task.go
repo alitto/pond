@@ -43,6 +43,8 @@ func (t wrappedTask[R, C]) Run() error {
 		c(err)
 	case func(R, error):
 		c(result, err)
+	default:
+		panic(fmt.Sprintf("unsupported callback type: %#v", t.callback))
 	}
 
 	return err
