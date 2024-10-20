@@ -209,6 +209,36 @@ if err != nil {
 }
 ```
 
+### Submitting a group of related tasks that return results
+
+You can submit a group of tasks that are related to each other and return results. This is useful when you need to execute a group of tasks concurrently and process the results. Results are returned in the order they were submitted.
+
+``` go
+// Create a pool with limited concurrency
+pool := pond.NewResultPool[string](10)
+
+// Create a task group
+group := pool.Group()
+
+// Submit a group of tasks
+for i := 0; i < 20; i++ {
+	i := i
+	group.Submit(func() string {
+		return fmt.Sprintf("Task #%d", i)
+	})
+}
+
+// Wait for all tasks in the group to complete
+results, err := group.Wait()
+// results = ["Task #0", "Task #1", ..., "Task #19"]
+
+if err != nil {
+	fmt.Printf("Failed to complete group tasks: %v", err)
+} else {
+	fmt.Printf("Successfully completed all group tasks: %v", results)
+}
+```
+
 ### Using a custom Context
 
 Each pool is associated with a context that is used to stop all workers when the pool is stopped. By default, the context is the background context (`context.Background()`). You can create a custom context and pass it to the pool to stop all workers when the context is cancelled.
