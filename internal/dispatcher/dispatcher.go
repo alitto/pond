@@ -121,7 +121,7 @@ func (d *Dispatcher[T]) run(ctx context.Context) {
 				batch = batch[:0]
 			}
 
-			if !ok {
+			if !ok || d.closed.Load() {
 				// Channel was closed, read all remaining elements and exit
 				return
 			}
