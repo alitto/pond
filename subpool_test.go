@@ -1,6 +1,7 @@
 package pond
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -169,4 +170,24 @@ func TestSubpoolMaxConcurrency(t *testing.T) {
 	subpool := pool.NewSubpool(0)
 
 	assert.Equal(t, 10, subpool.MaxConcurrency())
+}
+
+func TestSubpoolStoppedAfterCancel(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pool := NewPool(10, WithContext(ctx))
+	subpool := pool.NewSubpool(5)
+
+	cancel()
+
+	time.Sleep(1 * time.Millisecond)
+
+	err := pool.Submit(func() {}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	err = subpool.Submit(func() {}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
 }

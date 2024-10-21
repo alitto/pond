@@ -153,10 +153,45 @@ func TestPoolSubmitOnStoppedPool(t *testing.T) {
 	err = pool.Go(func() {})
 
 	assert.Equal(t, ErrPoolStopped, err)
+	assert.Equal(t, true, pool.Stopped())
 }
 
 func TestNewPoolWithInvalidMaxConcurrency(t *testing.T) {
 	assert.PanicsWithError(t, "maxConcurrency must be greater than 0", func() {
 		NewPool(-1)
 	})
+}
+
+func TestPoolStoppedAfterCancel(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pool := NewPool(10, WithContext(ctx))
+
+	err := pool.Submit(func() {
+		cancel()
+	}).Wait()
+
+	// If the context is canceled during the task execution, the task should return the context error.
+	assert.Equal(t, context.Canceled, err)
+
+	err = pool.Submit(func() {}).Wait()
+
+	// If the context is canceled, the pool should be stopped and the task should return the pool stopped error.
+	assert.Equal(t, ErrPoolStopped, err)
+	assert.True(t, pool.Stopped())
+
+	err = pool.Go(func() {})
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	pool.StopAndWait()
+
+	err = pool.Submit(func() {}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	err = pool.Go(func() {})
+
+	assert.Equal(t, ErrPoolStopped, err)
 }

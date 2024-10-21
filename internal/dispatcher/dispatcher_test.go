@@ -80,13 +80,15 @@ func TestDispatcherWithContextCanceled(t *testing.T) {
 
 	// Cancel the context
 	cancel()
-	// Write to the dispatcher
-	dispatcher.Write(1)
-	time.Sleep(5 * time.Millisecond)
+
+	// Attempt to write to the dispatcher
+	err := dispatcher.Write(1)
+
+	assert.Equal(t, ErrDispatcherClosed, err)
 
 	// Assert counters
-	assert.Equal(t, uint64(1), dispatcher.Len())
-	assert.Equal(t, uint64(1), dispatcher.WriteCount())
+	assert.Equal(t, uint64(0), dispatcher.Len())
+	assert.Equal(t, uint64(0), dispatcher.WriteCount())
 	assert.Equal(t, uint64(0), dispatcher.ReadCount())
 }
 

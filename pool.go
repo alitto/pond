@@ -15,6 +15,12 @@ const DEFAULT_TASKS_CHAN_LENGTH = 2048
 
 var ErrPoolStopped = errors.New("pool stopped")
 
+var poolStoppedFuture = func() Task {
+	future, resolve := future.NewFuture(context.Background())
+	resolve(ErrPoolStopped)
+	return future
+}()
+
 // basePool is the base interface for all pool types.
 type basePool interface {
 	// Returns the number of worker goroutines that are currently active (executing a task) in the pool.
@@ -46,6 +52,9 @@ type basePool interface {
 
 	// Stops the pool and waits for all tasks to complete.
 	StopAndWait()
+
+	// Returns true if the pool has been stopped or its context has been cancelled.
+	Stopped() bool
 }
 
 // Represents a pool of goroutines that can execute tasks concurrently.
@@ -71,6 +80,7 @@ type Pool interface {
 // pool is an implementation of the Pool interface.
 type pool struct {
 	ctx                 context.Context
+	cancel              context.CancelCauseFunc
 	maxConcurrency      int
 	tasks               chan any
 	tasksLen            int
@@ -83,6 +93,10 @@ type pool struct {
 
 func (p *pool) Context() context.Context {
 	return p.ctx
+}
+
+func (p *pool) Stopped() bool {
+	return p.ctx.Err() != nil
 }
 
 func (p *pool) MaxConcurrency() int {
@@ -138,13 +152,12 @@ func (p *pool) SubmitErr(task func() error) Task {
 }
 
 func (p *pool) submit(task any) Task {
-
 	future, resolve := future.NewFuture(p.Context())
 
 	wrapped := wrapTask[struct{}, func(error)](task, resolve)
 
 	if err := p.dispatcher.Write(wrapped); err != nil {
-		resolve(ErrPoolStopped)
+		return poolStoppedFuture
 	}
 
 	return future
@@ -157,6 +170,8 @@ func (p *pool) Stop() Task {
 		close(p.tasks)
 
 		p.workerWaitGroup.Wait()
+
+		p.cancel(ErrPoolStopped)
 	})
 }
 
@@ -284,6 +299,8 @@ func newPool(maxConcurrency int, options ...Option) *pool {
 	for _, option := range options {
 		option(pool)
 	}
+
+	pool.ctx, pool.cancel = context.WithCancelCause(pool.ctx)
 
 	pool.dispatcher = dispatcher.NewDispatcher(pool.ctx, pool.dispatch, tasksLen)
 

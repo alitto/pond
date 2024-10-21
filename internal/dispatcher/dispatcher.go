@@ -12,6 +12,7 @@ import (
 var ErrDispatcherClosed = errors.New("dispatcher has been closed")
 
 type Dispatcher[T any] struct {
+	ctx               context.Context
 	bufferHasElements chan struct{}
 	buffer            *linkedbuffer.LinkedBuffer[T]
 	dispatchFunc      func([]T)
@@ -24,6 +25,7 @@ type Dispatcher[T any] struct {
 // and process each element serially using the dispatchFunc
 func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize int) *Dispatcher[T] {
 	dispatcher := &Dispatcher[T]{
+		ctx:               ctx,
 		buffer:            linkedbuffer.NewLinkedBuffer[T](10, batchSize),
 		bufferHasElements: make(chan struct{}, 1),
 		dispatchFunc:      dispatchFunc,
@@ -40,7 +42,7 @@ func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize
 // Write writes values to the dispatcher
 func (d *Dispatcher[T]) Write(values ...T) error {
 	// Check if the dispatcher has been closed
-	if d.closed.Load() {
+	if d.closed.Load() || d.ctx.Err() != nil {
 		return ErrDispatcherClosed
 	}
 
