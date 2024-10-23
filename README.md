@@ -157,7 +157,7 @@ You can submit a group of tasks that are related to each other. This is useful w
 pool := pond.NewPool(10)
 
 // Create a task group
-group := pool.Group()
+group := pool.NewGroup()
 
 // Submit a group of tasks
 for i := 0; i < 20; i++ {
@@ -185,7 +185,7 @@ You can submit a group of tasks that are related to each other and wait for the 
 pool := pond.NewPool(10)
 
 // Create a task group
-group := pool.Group()
+group := pool.NewGroup()
 
 // Submit a group of tasks
 for i := 0; i < 20; i++ {
@@ -218,7 +218,7 @@ You can submit a group of tasks that are related to each other and return result
 pool := pond.NewResultPool[string](10)
 
 // Create a task group
-group := pool.Group()
+group := pool.NewGroup()
 
 // Submit a group of tasks
 for i := 0; i < 20; i++ {
@@ -372,7 +372,7 @@ If you are using pond v1, here are the changes you need to make to migrate to v2
    - `pond.Strategy`: The pool now scales automatically based on the number of tasks submitted.
 5. The `pool.StopAndWaitFor` method was deprecated. Use `pool.Stop().Done()` channel if you need to wait for the pool to stop in a select statement.
 6. The `pool.Group` method was renamed to `pool.NewGroup`.
-7. The `pool.GroupContext` method was deprecated. Use `pool.Group` instead and pass the context directly in the inline task function.
+7. The `pool.GroupContext` method was deprecated. Use `pool.NewGroup` instead and pass the context directly in the inline task function.
 
 
 ## Examples
