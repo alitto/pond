@@ -78,6 +78,15 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 	index := int(g.nextIndex.Add(1) - 1)
 
 	err := g.pool.Go(func() {
+		// Check if the context has been cancelled to prevent running tasks that are not needed
+		if err := g.future.Context().Err(); err != nil {
+			g.futureResolver(index, &result[O]{
+				Err: err,
+			}, err)
+			return
+		}
+
+		// Invoke the task
 		output, err := invokeTask[O](task)
 
 		g.futureResolver(index, &result[O]{
