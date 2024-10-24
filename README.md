@@ -94,12 +94,6 @@ task := pool.SubmitErr(func() error {
 
 // Wait for the task to complete and get the error
 err := task.Wait()
-
-if err != nil {
-	fmt.Printf("Failed to run task: %v", err)
-} else {
-	fmt.Println("Task completed successfully")
-}
 ```
 
 ### Submitting tasks that return results
@@ -117,12 +111,7 @@ task := pool.Submit(func() (string) {
 
 // Wait for the task to complete and get the result
 result, err := task.Wait()
-
-if err != nil {
-	fmt.Printf("Failed to run task: %v", err)
-} else {
-	fmt.Printf("Task result: %v", result)
-}
+// result = "Hello, World!" and err = nil
 ```
 
 ### Submitting tasks that return results or errors
@@ -140,12 +129,28 @@ task := pool.SubmitErr(func() (string, error) {
 
 // Wait for the task to complete and get the result
 result, err := task.Wait()
+// result = "Hello, World!" and err = nil
+```
 
-if err != nil {
-	fmt.Printf("Failed to run task: %v", err)
-} else {
-	fmt.Printf("Task result: %v", result)
-}
+### Submitting tasks associated with a context
+
+If you need to submit a task that is associated with a context, you can pass the context directly to the task function.
+
+``` go
+// Create a pool with limited concurrency
+pool := pond.NewPool(10)
+
+// Create a context that can be cancelled
+ctx, cancel := context.WithCancel(context.Background())
+
+// Submit a task that is associated with a context
+task := pool.SubmitErr(func() error {
+	return doSomethingWithCtx(ctx) // Pass the context to the task directly
+})
+
+// Wait for the task to complete and get the error.
+// If the context is cancelled, the task is stopped and an error is returned.
+err := task.Wait()
 ```
 
 ### Submitting a group of related tasks
@@ -169,11 +174,6 @@ for i := 0; i < 20; i++ {
 
 // Wait for all tasks in the group to complete
 err := group.Wait()
-if err != nil {
-	fmt.Printf("Failed to complete group tasks: %v", err)
-} else {
-	fmt.Println("Successfully completed all group tasks")
-}
 ```
 
 ### Submitting a group of related tasks and waiting for the first error
@@ -201,12 +201,6 @@ for i := 0; i < 20; i++ {
 
 // Wait for all tasks in the group to complete or the first error to occur
 err := group.Wait()
-
-if err != nil {
-	fmt.Printf("Failed to complete group tasks: %v", err)
-} else {
-	fmt.Println("Successfully completed all group tasks")
-}
 ```
 
 ### Submitting a group of related tasks that return results
@@ -230,18 +224,43 @@ for i := 0; i < 20; i++ {
 
 // Wait for all tasks in the group to complete
 results, err := group.Wait()
-// results = ["Task #0", "Task #1", ..., "Task #19"]
-
-if err != nil {
-	fmt.Printf("Failed to complete group tasks: %v", err)
-} else {
-	fmt.Printf("Successfully completed all group tasks: %v", results)
-}
+// results = ["Task #0", "Task #1", ..., "Task #19"] and err = nil
 ```
 
-### Using a custom Context
+### Submitting a group of tasks associated with a context
+
+If you need to submit a group of tasks that are associated with a context, you can pass the context directly to the task function.
+Just make sure to handle the context in the task function to stop the task when the context is cancelled.
+
+``` go
+// Create a pool with limited concurrency
+pool := pond.NewPool(10)
+
+// Create a context that can be cancelled
+ctx, cancel := context.WithCancel(context.Background())
+
+// Create a task group
+group := pool.NewGroup()
+
+// Submit a group of tasks
+for i := 0; i < 20; i++ {
+	i := i
+	group.SubmitErr(func() error {
+		return doSomethingWithCtx(ctx) // Pass the context to the task directly
+	})
+}
+
+// Wait for all tasks in the group to complete.
+// If the context is cancelled, all tasks are stopped and the first error is returned.
+err := group.Wait()
+```
+
+### Using a custom Context at the pool level
 
 Each pool is associated with a context that is used to stop all workers when the pool is stopped. By default, the context is the background context (`context.Background()`). You can create a custom context and pass it to the pool to stop all workers when the context is cancelled.
+
+> [!NOTE]  
+> The context passed to a pool with `pond.WithContext` is meant to be used to stop the pool and not to stop individual tasks. If you need to stop individual tasks, you should pass the context directly to the task function and handle it accordingly. See [Submitting tasks associated with a context](#submitting-tasks-associated-with-a-context) and [Submitting a group of tasks associated with a context](#submitting-a-group-of-tasks-associated-with-a-context).
 
 ```go
 // Create a custom context that can be cancelled

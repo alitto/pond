@@ -39,6 +39,10 @@ func NewCompositeFuture[V any](ctx context.Context) (*CompositeFuture[V], Compos
 	return future, future.resolve
 }
 
+func (f *CompositeFuture[V]) Context() context.Context {
+	return f.ctx
+}
+
 func (f *CompositeFuture[V]) Wait(count int) ([]V, error) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()

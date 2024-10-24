@@ -1,7 +1,9 @@
 package pond
 
 import (
+	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,6 +118,31 @@ func TestTaskGroupWithStoppedPool(t *testing.T) {
 	assert.Equal(t, ErrPoolStopped, err)
 }
 
+func TestTaskGroupWithContextCanceled(t *testing.T) {
+
+	pool := NewPool(100)
+
+	group := pool.NewGroup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	err := group.SubmitErr(func() error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+			return nil
+		}
+	}).Wait()
+
+	assert.Equal(t, context.Canceled, err)
+}
+
 func TestTaskGroupWithNoTasks(t *testing.T) {
 
 	group := NewResultPool[int](10).
@@ -127,4 +154,32 @@ func TestTaskGroupWithNoTasks(t *testing.T) {
 	assert.PanicsWithError(t, "no tasks provided", func() {
 		group.SubmitErr()
 	})
+}
+
+func TestTaskGroupCanceledShouldSkipRemainingTasks(t *testing.T) {
+
+	pool := NewPool(1)
+
+	group := pool.NewGroup()
+
+	var executedCount atomic.Int32
+	sampleErr := errors.New("sample error")
+
+	group.Submit(func() {
+		executedCount.Add(1)
+	})
+
+	group.SubmitErr(func() error {
+		time.Sleep(10 * time.Millisecond)
+		return sampleErr
+	})
+
+	group.Submit(func() {
+		executedCount.Add(1)
+	})
+
+	err := group.Wait()
+
+	assert.Equal(t, sampleErr, err)
+	assert.Equal(t, int32(1), executedCount.Load())
 }
