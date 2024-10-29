@@ -1,7 +1,6 @@
 package pond
 
 import (
-	"errors"
 	"sync/atomic"
 
 	"github.com/alitto/pond/v2/internal/future"
@@ -51,10 +50,6 @@ type abstractTaskGroup[T func() | func() O, E func() error | func() (O, error), 
 }
 
 func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E, O] {
-	if len(tasks) == 0 {
-		panic(errors.New("no tasks provided"))
-	}
-
 	for _, task := range tasks {
 		g.submit(task)
 	}
@@ -63,10 +58,6 @@ func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E,
 }
 
 func (g *abstractTaskGroup[T, E, O]) SubmitErr(tasks ...E) *abstractTaskGroup[T, E, O] {
-	if len(tasks) == 0 {
-		panic(errors.New("no tasks provided"))
-	}
-
 	for _, task := range tasks {
 		g.submit(task)
 	}
