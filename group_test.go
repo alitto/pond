@@ -148,12 +148,15 @@ func TestTaskGroupWithNoTasks(t *testing.T) {
 	group := NewResultPool[int](10).
 		NewGroup()
 
-	assert.PanicsWithError(t, "no tasks provided", func() {
-		group.Submit()
-	})
-	assert.PanicsWithError(t, "no tasks provided", func() {
-		group.SubmitErr()
-	})
+	results, err := group.Submit().Wait()
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 0, len(results))
+
+	results, err = group.SubmitErr().Wait()
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 0, len(results))
 }
 
 func TestTaskGroupCanceledShouldSkipRemainingTasks(t *testing.T) {
