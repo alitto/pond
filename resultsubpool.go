@@ -30,9 +30,9 @@ func newResultSubpool[R any](maxConcurrency int, ctx context.Context, parent *po
 		panic(fmt.Errorf("maxConcurrency cannot be greater than the parent pool's maxConcurrency (%d)", parent.MaxConcurrency()))
 	}
 
-	tasksLen := DEFAULT_TASKS_CHAN_LENGTH
-	if maxConcurrency < tasksLen {
-		tasksLen = maxConcurrency
+	tasksLen := maxConcurrency
+	if tasksLen > MAX_TASKS_CHAN_LENGTH {
+		tasksLen = MAX_TASKS_CHAN_LENGTH
 	}
 
 	subpool := &resultSubpool[R]{

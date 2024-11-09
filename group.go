@@ -1,10 +1,14 @@
 package pond
 
 import (
+	"context"
+	"errors"
 	"sync/atomic"
 
 	"github.com/alitto/pond/v2/internal/future"
 )
+
+var ErrGroupStopped = errors.New("task group stopped")
 
 // TaskGroup represents a group of tasks that can be executed concurrently.
 // The group can be waited on to block until all tasks have completed.
@@ -19,6 +23,12 @@ type TaskGroup interface {
 
 	// Waits for all tasks in the group to complete.
 	Wait() error
+
+	// Returns a channel that is closed when all tasks in the group have completed, a task returns an error, or the group is stopped.
+	Done() <-chan struct{}
+
+	// Stops the group and cancels all remaining tasks. Running tasks are not interrupted.
+	Stop()
 }
 
 // ResultTaskGroup represents a group of tasks that can be executed concurrently.
@@ -35,6 +45,12 @@ type ResultTaskGroup[O any] interface {
 
 	// Waits for all tasks in the group to complete.
 	Wait() ([]O, error)
+
+	// Returns a channel that is closed when all tasks in the group have completed, a task returns an error, or the group is stopped.
+	Done() <-chan struct{}
+
+	// Stops the group and cancels all remaining tasks. Running tasks are not interrupted.
+	Stop()
 }
 
 type result[O any] struct {
@@ -47,6 +63,14 @@ type abstractTaskGroup[T func() | func() O, E func() error | func() (O, error), 
 	nextIndex      atomic.Int64
 	future         *future.CompositeFuture[*result[O]]
 	futureResolver future.CompositeFutureResolver[*result[O]]
+}
+
+func (g *abstractTaskGroup[T, E, O]) Done() <-chan struct{} {
+	return g.future.Done(int(g.nextIndex.Load()))
+}
+
+func (g *abstractTaskGroup[T, E, O]) Stop() {
+	g.future.Cancel(ErrGroupStopped)
 }
 
 func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E, O] {
@@ -142,8 +166,8 @@ func (g *resultTaskGroup[O]) Wait() ([]O, error) {
 	return values, err
 }
 
-func newTaskGroup(pool *pool) TaskGroup {
-	future, futureResolver := future.NewCompositeFuture[*result[struct{}]](pool.Context())
+func newTaskGroup(pool *pool, ctx context.Context) TaskGroup {
+	future, futureResolver := future.NewCompositeFuture[*result[struct{}]](ctx)
 
 	return &taskGroup{
 		abstractTaskGroup: abstractTaskGroup[func(), func() error, struct{}]{
@@ -154,8 +178,8 @@ func newTaskGroup(pool *pool) TaskGroup {
 	}
 }
 
-func newResultTaskGroup[O any](pool *pool) ResultTaskGroup[O] {
-	future, futureResolver := future.NewCompositeFuture[*result[O]](pool.Context())
+func newResultTaskGroup[O any](pool *pool, ctx context.Context) ResultTaskGroup[O] {
+	future, futureResolver := future.NewCompositeFuture[*result[O]](ctx)
 
 	return &resultTaskGroup[O]{
 		abstractTaskGroup: abstractTaskGroup[func() O, func() (O, error), O]{

@@ -176,6 +176,32 @@ for i := 0; i < 20; i++ {
 err := group.Wait()
 ```
 
+### Submitting a group of related tasks associated with a context
+
+You can submit a group of tasks that are linked to a context. This is useful when you need to execute a group of tasks concurrently and stop them when the context is cancelled (e.g. when the parent task is cancelled or times out).
+
+``` go
+// Create a pool with limited concurrency
+pool := pond.NewPool(10)
+
+// Create a context with a 5s timeout
+timeout, _ := context.WithTimeout(context.Background(), 5*time.Second)
+
+// Create a task group with a context
+group := pool.NewGroupContext(timeout)
+
+// Submit a group of tasks
+for i := 0; i < 20; i++ {
+	i := i
+	group.Submit(func() {
+		fmt.Printf("Running group task #%d\n", i)
+	})
+}
+
+// Wait for all tasks in the group to complete or the timeout to occur, whichever comes first
+err := group.Wait()
+```
+
 ### Submitting a group of related tasks and waiting for the first error
 
 You can submit a group of tasks that are related to each other and wait for the first error to occur. This is useful when you need to execute a group of tasks concurrently and stop the execution if an error occurs.
@@ -258,9 +284,6 @@ err := group.Wait()
 ### Using a custom Context at the pool level
 
 Each pool is associated with a context that is used to stop all workers when the pool is stopped. By default, the context is the background context (`context.Background()`). You can create a custom context and pass it to the pool to stop all workers when the context is cancelled.
-
-> [!NOTE]  
-> The context passed to a pool with `pond.WithContext` is meant to be used to stop the pool and not to stop individual tasks. If you need to stop individual tasks, you should pass the context directly to the task function and handle it accordingly. See [Submitting tasks associated with a context](#submitting-tasks-associated-with-a-context) and [Submitting a group of tasks associated with a context](#submitting-a-group-of-tasks-associated-with-a-context).
 
 ```go
 // Create a custom context that can be cancelled
@@ -391,7 +414,7 @@ If you are using pond v1, here are the changes you need to make to migrate to v2
    - `pond.Strategy`: The pool now scales automatically based on the number of tasks submitted.
 5. The `pool.StopAndWaitFor` method was deprecated. Use `pool.Stop().Done()` channel if you need to wait for the pool to stop in a select statement.
 6. The `pool.Group` method was renamed to `pool.NewGroup`.
-7. The `pool.GroupContext` method was deprecated. Use `pool.NewGroup` instead and pass the context directly in the inline task function.
+7. The `pool.GroupContext` was renamed to `pool.NewGroupWithContext`.
 
 
 ## Examples

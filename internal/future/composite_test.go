@@ -132,3 +132,78 @@ func TestCompositeFutureWaitBeforeContextCanceled(t *testing.T) {
 	assert.Equal(t, context.Canceled, err)
 	assert.Equal(t, 0, len(outputs))
 }
+
+func TestCompositeFutureWaitWithContextCanceledAfterResolution(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	future, resolve := NewCompositeFuture[string](ctx)
+
+	resolve(0, "output1", nil)
+	cancel()
+
+	outputs, err := future.Wait(1)
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 1, len(outputs))
+	assert.Equal(t, "output1", outputs[0])
+}
+
+func TestCompositeFutureWithMultipleDone(t *testing.T) {
+	future, resolve := NewCompositeFuture[string](context.Background())
+
+	resolve(0, "output1", nil)
+
+	outputs1, err := future.Wait(1)
+	<-future.Done(1)
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 1, len(outputs1))
+	assert.Equal(t, "output1", outputs1[0])
+
+	resolve(1, "output2", nil)
+	resolve(2, "output3", nil)
+
+	outputs, err := future.Wait(3)
+	<-future.Done(3)
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 3, len(outputs))
+	assert.Equal(t, "output1", outputs[0])
+	assert.Equal(t, "output2", outputs[1])
+	assert.Equal(t, "output3", outputs[2])
+}
+
+func TestCompositeFutureWithErrorsAndMultipleDone(t *testing.T) {
+	future, resolve := NewCompositeFuture[string](context.Background())
+
+	sampleErr := errors.New("sample error")
+	resolve(0, "output1", sampleErr)
+
+	outputs1, err := future.Wait(1)
+	<-future.Done(1)
+
+	assert.Equal(t, sampleErr, err)
+	assert.Equal(t, 0, len(outputs1))
+
+	resolve(1, "output2", nil)
+	resolve(2, "output3", nil)
+
+	outputs, err := future.Wait(3)
+	<-future.Done(3)
+
+	assert.Equal(t, sampleErr, err)
+	assert.Equal(t, 0, len(outputs))
+}
+
+func TestCompositeFutureCancel(t *testing.T) {
+	future, resolve := NewCompositeFuture[string](context.Background())
+
+	resolve(0, "output1", nil)
+
+	sampleErr := errors.New("sample error")
+	future.Cancel(sampleErr)
+
+	outputs, err := future.Wait(1)
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 1, len(outputs))
+}

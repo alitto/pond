@@ -26,7 +26,7 @@ type resultPool[R any] struct {
 }
 
 func (p *resultPool[R]) NewGroup() ResultTaskGroup[R] {
-	return newResultTaskGroup[R](p.pool)
+	return newResultTaskGroup[R](p.pool, p.Context())
 }
 
 func (p *resultPool[R]) Submit(task func() R) Result[R] {
