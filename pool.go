@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/alitto/pond/v2/internal/future"
 )
 
-const DEFAULT_TASKS_CHAN_LENGTH = 2048
+var MAX_TASKS_CHAN_LENGTH = runtime.NumCPU() * 128
 
 var ErrPoolStopped = errors.New("pool stopped")
 
@@ -75,6 +76,9 @@ type Pool interface {
 
 	// Creates a new task group.
 	NewGroup() TaskGroup
+
+	// Creates a new task group with the specified context.
+	NewGroupContext(ctx context.Context) TaskGroup
 }
 
 // pool is an implementation of the Pool interface.
@@ -184,7 +188,11 @@ func (p *pool) NewSubpool(maxConcurrency int) Pool {
 }
 
 func (p *pool) NewGroup() TaskGroup {
-	return newTaskGroup(p)
+	return newTaskGroup(p, p.ctx)
+}
+
+func (p *pool) NewGroupContext(ctx context.Context) TaskGroup {
+	return newTaskGroup(p, ctx)
 }
 
 func (p *pool) dispatch(incomingTasks []any) {
@@ -202,11 +210,11 @@ func (p *pool) dispatchTask(task any) {
 	case p.tasks <- task:
 		// Task submitted
 
-		// If we could submit the task without blocking, it means one of two things:
-		// 1. There are idle workers (all workers are busy)
-		// 2. There are no workers
-		// In either case, we should launch a new worker if the number of workers is less than the maximum concurrency
-		if workerCount < p.maxConcurrency {
+		// If we could submit the task without blocking, it means that either:
+		// 1. There are no idle workers (all spawned workers are processing a task)
+		// 2. There are no workers in the pool
+		// In either case, we should launch a new worker as long as the number of workers is less than the size of the task queue.
+		if workerCount < p.tasksLen {
 			// Launch a new worker
 			p.startWorker()
 		}
@@ -284,9 +292,9 @@ func newPool(maxConcurrency int, options ...Option) *pool {
 		panic(errors.New("maxConcurrency must be greater than 0"))
 	}
 
-	tasksLen := DEFAULT_TASKS_CHAN_LENGTH
-	if maxConcurrency < tasksLen {
-		tasksLen = maxConcurrency
+	tasksLen := maxConcurrency
+	if tasksLen > MAX_TASKS_CHAN_LENGTH {
+		tasksLen = MAX_TASKS_CHAN_LENGTH
 	}
 
 	pool := &pool{

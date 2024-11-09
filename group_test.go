@@ -186,3 +186,74 @@ func TestTaskGroupCanceledShouldSkipRemainingTasks(t *testing.T) {
 	assert.Equal(t, sampleErr, err)
 	assert.Equal(t, int32(1), executedCount.Load())
 }
+
+func TestTaskGroupWithCustomContext(t *testing.T) {
+	pool := NewPool(1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	group := pool.NewGroupContext(ctx)
+
+	var executedCount atomic.Int32
+
+	group.Submit(func() {
+		executedCount.Add(1)
+	})
+	group.Submit(func() {
+		executedCount.Add(1)
+		cancel()
+	})
+	group.Submit(func() {
+		executedCount.Add(1)
+	})
+
+	err := group.Wait()
+
+	assert.Equal(t, context.Canceled, err)
+	assert.Equal(t, struct{}{}, <-group.Done())
+	assert.Equal(t, int32(2), executedCount.Load())
+}
+
+func TestTaskGroupStop(t *testing.T) {
+	pool := NewPool(1)
+
+	group := pool.NewGroup()
+
+	var executedCount atomic.Int32
+
+	group.Submit(func() {
+		executedCount.Add(1)
+	})
+	group.Submit(func() {
+		executedCount.Add(1)
+		group.Stop()
+	})
+	group.Submit(func() {
+		executedCount.Add(1)
+	})
+
+	err := group.Wait()
+
+	assert.Equal(t, ErrGroupStopped, err)
+	assert.Equal(t, struct{}{}, <-group.Done())
+	assert.Equal(t, int32(2), executedCount.Load())
+}
+
+func TestTaskGroupDone(t *testing.T) {
+	pool := NewPool(10)
+
+	group := pool.NewGroup()
+
+	var executedCount atomic.Int32
+
+	for i := 0; i < 5; i++ {
+		group.Submit(func() {
+			time.Sleep(1 * time.Millisecond)
+			executedCount.Add(1)
+		})
+	}
+
+	<-group.Done()
+
+	assert.Equal(t, int32(5), executedCount.Load())
+}
