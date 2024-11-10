@@ -36,7 +36,7 @@ func TestResultTaskGroupWait(t *testing.T) {
 
 func TestResultTaskGroupWaitWithError(t *testing.T) {
 
-	group := NewResultPool[int](10).
+	group := NewResultPool[int](1).
 		NewGroup()
 
 	sampleErr := errors.New("sample error")
@@ -57,7 +57,12 @@ func TestResultTaskGroupWaitWithError(t *testing.T) {
 	outputs, err := group.Wait()
 
 	assert.Equal(t, sampleErr, err)
-	assert.Equal(t, 0, len(outputs))
+	assert.Equal(t, 5, len(outputs))
+	assert.Equal(t, 0, outputs[0])
+	assert.Equal(t, 1, outputs[1])
+	assert.Equal(t, 2, outputs[2])
+	assert.Equal(t, 0, outputs[3]) // This task returned an error
+	assert.Equal(t, 0, outputs[4]) // This task was not executed
 }
 
 func TestResultTaskGroupWaitWithErrorInLastTask(t *testing.T) {
@@ -80,7 +85,9 @@ func TestResultTaskGroupWaitWithErrorInLastTask(t *testing.T) {
 	outputs, err := group.Wait()
 
 	assert.Equal(t, sampleErr, err)
-	assert.Equal(t, 0, len(outputs))
+	assert.Equal(t, 2, len(outputs))
+	assert.Equal(t, 1, outputs[0])
+	assert.Equal(t, 0, outputs[1])
 }
 
 func TestResultTaskGroupWaitWithMultipleErrors(t *testing.T) {
@@ -95,6 +102,7 @@ func TestResultTaskGroupWaitWithMultipleErrors(t *testing.T) {
 		i := i
 		group.SubmitErr(func() (int, error) {
 			if i%2 == 0 {
+				time.Sleep(10 * time.Millisecond)
 				return 0, sampleErr
 			}
 			return i, nil
@@ -103,8 +111,65 @@ func TestResultTaskGroupWaitWithMultipleErrors(t *testing.T) {
 
 	outputs, err := group.Wait()
 
-	assert.Equal(t, 0, len(outputs))
 	assert.Equal(t, sampleErr, err)
+	assert.Equal(t, 5, len(outputs))
+	assert.Equal(t, 0, outputs[0])
+	assert.Equal(t, 1, outputs[1])
+	assert.Equal(t, 0, outputs[2])
+	assert.Equal(t, 3, outputs[3])
+	assert.Equal(t, 0, outputs[4])
+}
+
+func TestResultTaskGroupWaitWithContextCanceledAndOngoingTasks(t *testing.T) {
+	pool := NewResultPool[string](1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	group := pool.NewGroupContext(ctx)
+
+	group.Submit(func() string {
+		cancel() // cancel the context after the first task is started
+		time.Sleep(10 * time.Millisecond)
+		return "output1"
+	})
+
+	group.Submit(func() string {
+		time.Sleep(10 * time.Millisecond)
+		return "output2"
+	})
+
+	results, err := group.Wait()
+
+	assert.Equal(t, context.Canceled, err)
+	assert.Equal(t, int(2), len(results))
+	assert.Equal(t, "", results[0])
+	assert.Equal(t, "", results[1])
+}
+
+func TestTaskGroupWaitWithContextCanceledAndOngoingTasks(t *testing.T) {
+	pool := NewPool(1)
+
+	var executedCount atomic.Int32
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	group := pool.NewGroupContext(ctx)
+
+	group.Submit(func() {
+		cancel() // cancel the context after the first task is started
+		time.Sleep(10 * time.Millisecond)
+		executedCount.Add(1)
+	})
+
+	group.Submit(func() {
+		time.Sleep(10 * time.Millisecond)
+		executedCount.Add(1)
+	})
+
+	err := group.Wait()
+
+	assert.Equal(t, context.Canceled, err)
+	assert.Equal(t, int32(1), executedCount.Load())
 }
 
 func TestTaskGroupWithStoppedPool(t *testing.T) {

@@ -3,6 +3,7 @@ package pond
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	"github.com/alitto/pond/v2/internal/future"
@@ -22,6 +23,10 @@ type TaskGroup interface {
 	SubmitErr(tasks ...func() error) TaskGroup
 
 	// Waits for all tasks in the group to complete.
+	// If any of the tasks return an error, the group will return the first error encountered.
+	// If the context is cancelled, the group will return the context error.
+	// If the group is stopped, the group will return ErrGroupStopped.
+	// If a task is running when the context is cancelled or the group is stopped, the task will be allowed to complete before returning.
 	Wait() error
 
 	// Returns a channel that is closed when all tasks in the group have completed, a task returns an error, or the group is stopped.
@@ -43,7 +48,11 @@ type ResultTaskGroup[O any] interface {
 	// Submits a task to the group that can return an error.
 	SubmitErr(tasks ...func() (O, error)) ResultTaskGroup[O]
 
-	// Waits for all tasks in the group to complete.
+	// Waits for all tasks in the group to complete and returns the results of each task in the order they were submitted.
+	// If any of the tasks return an error, the group will return the first error encountered.
+	// If the context is cancelled, the group will return the context error.
+	// If the group is stopped, the group will return ErrGroupStopped.
+	// If a task is running when the context is cancelled or the group is stopped, the task will be allowed to complete before returning.
 	Wait() ([]O, error)
 
 	// Returns a channel that is closed when all tasks in the group have completed, a task returns an error, or the group is stopped.
@@ -61,6 +70,7 @@ type result[O any] struct {
 type abstractTaskGroup[T func() | func() O, E func() error | func() (O, error), O any] struct {
 	pool           *pool
 	nextIndex      atomic.Int64
+	taskWaitGroup  sync.WaitGroup
 	future         *future.CompositeFuture[*result[O]]
 	futureResolver future.CompositeFutureResolver[*result[O]]
 }
@@ -92,7 +102,11 @@ func (g *abstractTaskGroup[T, E, O]) SubmitErr(tasks ...E) *abstractTaskGroup[T,
 func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 	index := int(g.nextIndex.Add(1) - 1)
 
+	g.taskWaitGroup.Add(1)
+
 	err := g.pool.Go(func() {
+		defer g.taskWaitGroup.Done()
+
 		// Check if the context has been cancelled to prevent running tasks that are not needed
 		if err := g.future.Context().Err(); err != nil {
 			g.futureResolver(index, &result[O]{
@@ -111,6 +125,8 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 	})
 
 	if err != nil {
+		g.taskWaitGroup.Done()
+
 		g.futureResolver(index, &result[O]{
 			Err: err,
 		}, err)
@@ -133,6 +149,9 @@ func (g *taskGroup) SubmitErr(tasks ...func() error) TaskGroup {
 
 func (g *taskGroup) Wait() error {
 	_, err := g.future.Wait(int(g.nextIndex.Load()))
+	// This wait group could reach zero before the future is resolved if called in between tasks being submitted and the future being resolved.
+	// That's why we wait for the future to be resolved before waiting for the wait group.
+	g.taskWaitGroup.Wait()
 	return err
 }
 
@@ -153,14 +172,16 @@ func (g *resultTaskGroup[O]) SubmitErr(tasks ...func() (O, error)) ResultTaskGro
 func (g *resultTaskGroup[O]) Wait() ([]O, error) {
 	results, err := g.future.Wait(int(g.nextIndex.Load()))
 
-	if err != nil {
-		return []O{}, err
-	}
+	// This wait group could reach zero before the future is resolved if called in between tasks being submitted and the future being resolved.
+	// That's why we wait for the future to be resolved before waiting for the wait group.
+	g.taskWaitGroup.Wait()
 
 	values := make([]O, len(results))
 
 	for i, result := range results {
-		values[i] = result.Output
+		if result != nil {
+			values[i] = result.Output
+		}
 	}
 
 	return values, err

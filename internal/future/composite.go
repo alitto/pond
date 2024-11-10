@@ -13,6 +13,15 @@ type compositeResolution[V any] struct {
 	value V
 }
 
+type compositeErrorResolution struct {
+	index int
+	err   error
+}
+
+func (e *compositeErrorResolution) Error() string {
+	return e.err.Error()
+}
+
 type waitListener struct {
 	count int
 	ch    chan struct{}
@@ -66,8 +75,14 @@ func (f *CompositeFuture[V]) Context() context.Context {
 }
 
 func (f *CompositeFuture[V]) Cancel(cause error) {
-	var zero V
-	f.resolve(len(f.resolutions), zero, cause)
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	// Cancel the context
+	f.cancel(cause)
+
+	// Notify listeners
+	f.notifyListeners()
 }
 
 func (f *CompositeFuture[V]) Wait(count int) ([]V, error) {
@@ -109,9 +124,12 @@ func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
 
 	// Cancel the context if an error occurred
 	if err != nil {
-		f.cancel(err)
+		f.cancel(&compositeErrorResolution{
+			index: index,
+			err:   err,
+		})
 	} else if context.Cause(f.ctx) == nil {
-		// Save the resolution as long as the context is not canceled
+		// Save the resolution
 		f.resolutions = append(f.resolutions, compositeResolution[V]{
 			index: index,
 			value: value,
@@ -122,28 +140,35 @@ func (f *CompositeFuture[V]) resolve(index int, value V, err error) {
 	f.notifyListeners()
 }
 
-func (f *CompositeFuture[V]) getResult(count int) ([]V, error) {
-	// If we have enough results, return them
-	if len(f.resolutions) >= count {
+func (f *CompositeFuture[V]) getResult(count int) (values []V, err error) {
 
-		// Get sorted results
-		result := make([]V, count)
+	cause := context.Cause(f.ctx)
+
+	// If we have enough results, return them
+	if cause != nil || len(f.resolutions) >= count {
+		// Get sorted resolution values
+		values = make([]V, count)
 		for _, resolution := range f.resolutions {
 			if resolution.index < count {
-				result[resolution.index] = resolution.value
+				values[resolution.index] = resolution.value
 			}
 		}
-
-		return result, nil
 	}
 
-	err := context.Cause(f.ctx)
-
-	if err != nil {
-		return []V{}, err
+	if cause == nil {
+		return
 	}
 
-	return nil, nil
+	if errorResolution, ok := cause.(*compositeErrorResolution); ok {
+		// Unwrap the error resolution
+		err = errorResolution.err
+	} else if len(f.resolutions) < count {
+		// If the context is canceled and we have collected enough results, return nil error
+		// because we assume that context cancellation happened after the last resolution.
+		err = cause
+	}
+
+	return
 }
 
 func (f *CompositeFuture[V]) notifyListeners() {

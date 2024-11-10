@@ -1,6 +1,8 @@
 package pond
 
 import (
+	"context"
+
 	"github.com/alitto/pond/v2/internal/future"
 )
 
@@ -19,6 +21,9 @@ type ResultPool[R any] interface {
 
 	// Creates a new task group.
 	NewGroup() ResultTaskGroup[R]
+
+	// Creates a new task group with the specified context.
+	NewGroupContext(ctx context.Context) ResultTaskGroup[R]
 }
 
 type resultPool[R any] struct {
@@ -27,6 +32,10 @@ type resultPool[R any] struct {
 
 func (p *resultPool[R]) NewGroup() ResultTaskGroup[R] {
 	return newResultTaskGroup[R](p.pool, p.Context())
+}
+
+func (p *resultPool[R]) NewGroupContext(ctx context.Context) ResultTaskGroup[R] {
+	return newResultTaskGroup[R](p.pool, ctx)
 }
 
 func (p *resultPool[R]) Submit(task func() R) Result[R] {
