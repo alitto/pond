@@ -36,7 +36,10 @@ func TestCompositeFutureWaitWithError(t *testing.T) {
 	outputs, err := future.Wait(3)
 
 	assert.Equal(t, sampleErr, err)
-	assert.Equal(t, 0, len(outputs))
+	assert.Equal(t, 3, len(outputs))
+	assert.Equal(t, "output1", outputs[0])
+	assert.Equal(t, "output2", outputs[1])
+	assert.Equal(t, "", outputs[2])
 }
 
 func TestCompositeFutureWaitWithCanceledContext(t *testing.T) {
@@ -47,7 +50,7 @@ func TestCompositeFutureWaitWithCanceledContext(t *testing.T) {
 
 	resolve(0, "output1", nil)
 
-	_, err := future.Wait(2)
+	_, err := future.Wait(1)
 
 	assert.Equal(t, context.Canceled, err)
 }
@@ -92,7 +95,8 @@ func TestCompositeFutureWithErrorsAndMultipleWait(t *testing.T) {
 	outputs1, err := future.Wait(1)
 
 	assert.Equal(t, sampleErr, err)
-	assert.Equal(t, 0, len(outputs1))
+	assert.Equal(t, 1, len(outputs1))
+	assert.Equal(t, "", outputs1[0])
 
 	resolve(1, "output2", nil)
 	resolve(2, "output3", nil)
@@ -100,7 +104,10 @@ func TestCompositeFutureWithErrorsAndMultipleWait(t *testing.T) {
 	outputs, err := future.Wait(3)
 
 	assert.Equal(t, sampleErr, err)
-	assert.Equal(t, 0, len(outputs))
+	assert.Equal(t, 3, len(outputs))
+	assert.Equal(t, "", outputs[0])
+	assert.Equal(t, "", outputs[1])
+	assert.Equal(t, "", outputs[2])
 }
 
 func TestCompositeFutureWaitBeforeResoluion(t *testing.T) {
@@ -130,7 +137,8 @@ func TestCompositeFutureWaitBeforeContextCanceled(t *testing.T) {
 	outputs, err := future.Wait(1)
 
 	assert.Equal(t, context.Canceled, err)
-	assert.Equal(t, 0, len(outputs))
+	assert.Equal(t, 1, len(outputs))
+	assert.Equal(t, "", outputs[0])
 }
 
 func TestCompositeFutureWaitWithContextCanceledAfterResolution(t *testing.T) {
@@ -182,7 +190,8 @@ func TestCompositeFutureWithErrorsAndMultipleDone(t *testing.T) {
 	<-future.Done(1)
 
 	assert.Equal(t, sampleErr, err)
-	assert.Equal(t, 0, len(outputs1))
+	assert.Equal(t, 1, len(outputs1))
+	assert.Equal(t, "", outputs1[0])
 
 	resolve(1, "output2", nil)
 	resolve(2, "output3", nil)
@@ -191,7 +200,7 @@ func TestCompositeFutureWithErrorsAndMultipleDone(t *testing.T) {
 	<-future.Done(3)
 
 	assert.Equal(t, sampleErr, err)
-	assert.Equal(t, 0, len(outputs))
+	assert.Equal(t, 3, len(outputs))
 }
 
 func TestCompositeFutureCancel(t *testing.T) {

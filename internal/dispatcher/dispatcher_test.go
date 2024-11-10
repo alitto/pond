@@ -96,7 +96,7 @@ func TestDispatcherWithContextCanceledAfterWrite(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	receivedCount := atomic.Uint64{}
+	var receivedCount atomic.Uint64
 	receiveFunc := func(elems []int) {
 		for range elems {
 			receivedCount.Add(1)
@@ -110,16 +110,18 @@ func TestDispatcherWithContextCanceledAfterWrite(t *testing.T) {
 	assert.Equal(t, uint64(0), dispatcher.WriteCount())
 	assert.Equal(t, uint64(0), dispatcher.ReadCount())
 
+	dispatcher.Write(1)
+	time.Sleep(5 * time.Millisecond)
+
 	// Cancel the context
-	dispatcher.Write(1)
-	time.Sleep(5 * time.Millisecond) // Wait for the dispatcher to process the element
 	cancel()
+
 	dispatcher.Write(1)
-	time.Sleep(5 * time.Millisecond) // Wait for the dispatcher to process the element
+	time.Sleep(5 * time.Millisecond)
 
 	// Assert counters
-	assert.Equal(t, uint64(1), dispatcher.Len())
-	assert.Equal(t, uint64(2), dispatcher.WriteCount())
+	assert.Equal(t, uint64(0), dispatcher.Len())
+	assert.Equal(t, uint64(1), dispatcher.WriteCount())
 	assert.Equal(t, uint64(1), dispatcher.ReadCount())
 }
 
