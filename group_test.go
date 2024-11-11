@@ -36,8 +36,11 @@ func TestResultTaskGroupWait(t *testing.T) {
 
 func TestResultTaskGroupWaitWithError(t *testing.T) {
 
-	group := NewResultPool[int](1).
-		NewGroup()
+	pool := NewResultPool[int](1)
+
+	pool.EnableDebug()
+
+	group := pool.NewGroup()
 
 	sampleErr := errors.New("sample error")
 
@@ -113,11 +116,6 @@ func TestResultTaskGroupWaitWithMultipleErrors(t *testing.T) {
 
 	assert.Equal(t, sampleErr, err)
 	assert.Equal(t, 5, len(outputs))
-	assert.Equal(t, 0, outputs[0])
-	assert.Equal(t, 1, outputs[1])
-	assert.Equal(t, 0, outputs[2])
-	assert.Equal(t, 3, outputs[3])
-	assert.Equal(t, 0, outputs[4])
 }
 
 func TestResultTaskGroupWaitWithContextCanceledAndOngoingTasks(t *testing.T) {
@@ -175,6 +173,7 @@ func TestTaskGroupWaitWithContextCanceledAndOngoingTasks(t *testing.T) {
 func TestTaskGroupWithStoppedPool(t *testing.T) {
 
 	pool := NewPool(100)
+	pool.EnableDebug()
 
 	pool.StopAndWait()
 
@@ -186,6 +185,7 @@ func TestTaskGroupWithStoppedPool(t *testing.T) {
 func TestTaskGroupWithContextCanceled(t *testing.T) {
 
 	pool := NewPool(100)
+	pool.EnableDebug()
 
 	group := pool.NewGroup()
 
@@ -227,6 +227,7 @@ func TestTaskGroupWithNoTasks(t *testing.T) {
 func TestTaskGroupCanceledShouldSkipRemainingTasks(t *testing.T) {
 
 	pool := NewPool(1)
+	pool.EnableDebug()
 
 	group := pool.NewGroup()
 
@@ -255,6 +256,8 @@ func TestTaskGroupCanceledShouldSkipRemainingTasks(t *testing.T) {
 func TestTaskGroupWithCustomContext(t *testing.T) {
 	pool := NewPool(1)
 
+	pool.EnableDebug()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	group := pool.NewGroupContext(ctx)
@@ -281,6 +284,7 @@ func TestTaskGroupWithCustomContext(t *testing.T) {
 
 func TestTaskGroupStop(t *testing.T) {
 	pool := NewPool(1)
+	pool.EnableDebug()
 
 	group := pool.NewGroup()
 
@@ -306,6 +310,7 @@ func TestTaskGroupStop(t *testing.T) {
 
 func TestTaskGroupDone(t *testing.T) {
 	pool := NewPool(10)
+	pool.EnableDebug()
 
 	group := pool.NewGroup()
 

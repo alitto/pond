@@ -1,6 +1,7 @@
 package linkedbuffer
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -17,7 +18,8 @@ type LinkedBuffer[T any] struct {
 	maxCapacity int
 	writeCount  atomic.Uint64
 	readCount   atomic.Uint64
-	mutex       sync.RWMutex
+	mutex       sync.Mutex
+	Debug       bool
 }
 
 func NewLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
@@ -78,28 +80,29 @@ func (b *LinkedBuffer[T]) Write(values []T) {
 
 // Read reads values from the buffer and returns the number of elements read
 func (b *LinkedBuffer[T]) Read(values []T) int {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
 	var readBuffer *Buffer[T]
 
 	for {
-		b.mutex.RLock()
 		readBuffer = b.readBuffer
-		b.mutex.RUnlock()
 
 		// Read element
 		n, err := readBuffer.Read(values)
 
+		if b.Debug {
+			fmt.Printf("read %d elements: %v\n", n, values)
+		}
+
 		if err == ErrEOF {
 			// Move to next buffer
-			b.mutex.Lock()
 			if readBuffer.next == nil {
-				b.mutex.Unlock()
 				return n
 			}
 			if b.readBuffer != readBuffer.next {
 				b.readBuffer = readBuffer.next
 			}
-			b.mutex.Unlock()
 			continue
 		}
 

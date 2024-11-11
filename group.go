@@ -3,6 +3,7 @@ package pond
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -103,9 +104,13 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 	index := int(g.nextIndex.Add(1) - 1)
 
 	g.taskWaitGroup.Add(1)
+	fmt.Printf("submitting task %d\n", index)
 
 	err := g.pool.Go(func() {
-		defer g.taskWaitGroup.Done()
+		defer func() {
+			fmt.Printf("task %d done\n", index)
+			g.taskWaitGroup.Done()
+		}()
 
 		// Check if the context has been cancelled to prevent running tasks that are not needed
 		if err := g.future.Context().Err(); err != nil {

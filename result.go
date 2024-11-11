@@ -10,6 +10,9 @@ import (
 type ResultPool[R any] interface {
 	basePool
 
+	// Enables debug mode for the pool.
+	EnableDebug()
+
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
 	Submit(task func() R) Result[R]
 
@@ -28,6 +31,10 @@ type ResultPool[R any] interface {
 
 type resultPool[R any] struct {
 	*pool
+}
+
+func (d *resultPool[R]) EnableDebug() {
+	d.dispatcher.EnableDebug()
 }
 
 func (p *resultPool[R]) NewGroup() ResultTaskGroup[R] {

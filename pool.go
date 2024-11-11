@@ -79,6 +79,8 @@ type Pool interface {
 
 	// Creates a new task group with the specified context.
 	NewGroupContext(ctx context.Context) TaskGroup
+
+	EnableDebug()
 }
 
 // pool is an implementation of the Pool interface.
@@ -137,6 +139,10 @@ func (p *pool) updateMetrics(err error) {
 	} else {
 		p.successfulTaskCount.Add(1)
 	}
+}
+
+func (d *pool) EnableDebug() {
+	d.dispatcher.EnableDebug()
 }
 
 func (p *pool) Go(task func()) error {
