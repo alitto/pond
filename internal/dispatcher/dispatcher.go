@@ -27,7 +27,7 @@ type Dispatcher[T any] struct {
 func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize int) *Dispatcher[T] {
 	dispatcher := &Dispatcher[T]{
 		ctx:               ctx,
-		buffer:            linkedbuffer.NewLinkedBuffer[T](1, batchSize),
+		buffer:            linkedbuffer.NewLinkedBuffer[T](10, batchSize),
 		bufferHasElements: make(chan struct{}, 2), // This channel needs to have size 2 in case an element is written to the buffer while the dispatcher is processing elements
 		dispatchFunc:      dispatchFunc,
 		batchSize:         batchSize,
