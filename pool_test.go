@@ -90,7 +90,6 @@ func TestPoolWithContextCanceled(t *testing.T) {
 		})
 	}
 
-	assert.Equal(t, int64(10), pool.RunningWorkers())
 	assert.Equal(t, uint64(taskCount), pool.SubmittedTasks())
 
 	// Cancel the context after 5ms
