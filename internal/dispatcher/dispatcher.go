@@ -124,7 +124,7 @@ func (d *Dispatcher[T]) run(ctx context.Context) {
 				d.dispatchFunc(batch[0:batchSize])
 
 				// Reset batch
-				batch = batch[:0]
+				//batch = batch[:0]
 			}
 
 			if !ok || d.closed.Load() {
