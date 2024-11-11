@@ -28,7 +28,7 @@ func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize
 	dispatcher := &Dispatcher[T]{
 		ctx:               ctx,
 		buffer:            linkedbuffer.NewLinkedBuffer[T](10, batchSize),
-		bufferHasElements: make(chan struct{}, 2), // This channel needs to have size 2 in case an element is written to the buffer while the dispatcher is processing elements
+		bufferHasElements: make(chan struct{}, 1), // This channel needs to have size 2 in case an element is written to the buffer while the dispatcher is processing elements
 		dispatchFunc:      dispatchFunc,
 		batchSize:         batchSize,
 	}
