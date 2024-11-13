@@ -1,7 +1,6 @@
 package linkedbuffer
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -19,7 +18,6 @@ type LinkedBuffer[T any] struct {
 	writeCount  atomic.Uint64
 	readCount   atomic.Uint64
 	mutex       sync.Mutex
-	Debug       bool
 }
 
 func NewLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
@@ -90,10 +88,6 @@ func (b *LinkedBuffer[T]) Read(values []T) int {
 
 		// Read element
 		n, err := readBuffer.Read(values)
-
-		if b.Debug {
-			fmt.Printf("read %d elements: %v\n", n, values)
-		}
 
 		if err == ErrEOF {
 			// Move to next buffer

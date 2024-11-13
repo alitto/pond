@@ -14,6 +14,8 @@ import (
 
 var MAX_TASKS_CHAN_LENGTH = runtime.NumCPU() * 128
 
+var PERSISTENT_WORKER_COUNT = int64(runtime.NumCPU())
+
 var ErrPoolStopped = errors.New("pool stopped")
 
 var poolStoppedFuture = func() Task {
@@ -79,8 +81,6 @@ type Pool interface {
 
 	// Creates a new task group with the specified context.
 	NewGroupContext(ctx context.Context) TaskGroup
-
-	EnableDebug()
 }
 
 // pool is an implementation of the Pool interface.
@@ -93,6 +93,7 @@ type pool struct {
 	workerCount         atomic.Int64
 	workerWaitGroup     sync.WaitGroup
 	dispatcher          *dispatcher.Dispatcher[any]
+	dispatcherRunning   sync.Mutex
 	successfulTaskCount atomic.Uint64
 	failedTaskCount     atomic.Uint64
 }
@@ -139,10 +140,6 @@ func (p *pool) updateMetrics(err error) {
 	} else {
 		p.successfulTaskCount.Add(1)
 	}
-}
-
-func (d *pool) EnableDebug() {
-	d.dispatcher.EnableDebug()
 }
 
 func (p *pool) Go(task func()) error {
@@ -202,6 +199,9 @@ func (p *pool) NewGroupContext(ctx context.Context) TaskGroup {
 }
 
 func (p *pool) dispatch(incomingTasks []any) {
+	p.dispatcherRunning.Lock()
+	defer p.dispatcherRunning.Unlock()
+
 	// Submit tasks
 	for _, task := range incomingTasks {
 		p.dispatchTask(task)
@@ -209,8 +209,6 @@ func (p *pool) dispatch(incomingTasks []any) {
 }
 
 func (p *pool) dispatchTask(task any) {
-	workerCount := int(p.workerCount.Load())
-
 	// Attempt to submit task without blocking
 	select {
 	case p.tasks <- task:
@@ -220,19 +218,13 @@ func (p *pool) dispatchTask(task any) {
 		// 1. There are no idle workers (all spawned workers are processing a task)
 		// 2. There are no workers in the pool
 		// In either case, we should launch a new worker as long as the number of workers is less than the size of the task queue.
-		if workerCount < p.tasksLen {
-			// Launch a new worker
-			p.startWorker()
-		}
+		p.startWorker(p.tasksLen)
 		return
 	default:
 	}
 
 	// Task queue is full, launch a new worker if the number of workers is less than the maximum concurrency
-	if workerCount < p.maxConcurrency {
-		// Launch a new worker
-		p.startWorker()
-	}
+	p.startWorker(p.maxConcurrency)
 
 	// Block until task is submitted
 	select {
@@ -244,15 +236,41 @@ func (p *pool) dispatchTask(task any) {
 	}
 }
 
-func (p *pool) startWorker() {
+func (p *pool) startWorker(limit int) {
+	if p.workerCount.Load() >= int64(limit) {
+		return
+	}
 	p.workerWaitGroup.Add(1)
-	p.workerCount.Add(1)
-	go p.worker()
+	workerNumber := p.workerCount.Add(1)
+	// Guarantee at least PERSISTENT_WORKER_COUNT workers are always running during dispatch to prevent deadlocks
+	canExitDuringDispatch := workerNumber > PERSISTENT_WORKER_COUNT
+	go p.worker(canExitDuringDispatch)
 }
 
-func (p *pool) worker() {
-	defer func() {
+func (p *pool) workerCanExit(canExitDuringDispatch bool) bool {
+	if canExitDuringDispatch {
 		p.workerCount.Add(-1)
+		return true
+	}
+
+	// Check if the dispatcher is running
+	if !p.dispatcherRunning.TryLock() {
+		// Dispatcher is running, cannot exit yet
+		return false
+	}
+	if len(p.tasks) > 0 {
+		// There are tasks in the queue, cannot exit yet
+		p.dispatcherRunning.Unlock()
+		return false
+	}
+	p.workerCount.Add(-1)
+	p.dispatcherRunning.Unlock()
+
+	return true
+}
+
+func (p *pool) worker(canExitDuringDispatch bool) {
+	defer func() {
 		p.workerWaitGroup.Done()
 	}()
 
@@ -261,6 +279,7 @@ func (p *pool) worker() {
 		select {
 		case <-p.ctx.Done():
 			// Context cancelled, exit
+			p.workerCount.Add(-1)
 			return
 		default:
 		}
@@ -268,10 +287,12 @@ func (p *pool) worker() {
 		select {
 		case <-p.ctx.Done():
 			// Context cancelled, exit
+			p.workerCount.Add(-1)
 			return
 		case task, ok := <-p.tasks:
 			if !ok || task == nil {
 				// Channel closed or worker killed, exit
+				p.workerCount.Add(-1)
 				return
 			}
 
@@ -282,8 +303,13 @@ func (p *pool) worker() {
 			p.updateMetrics(err)
 
 		default:
-			// No tasks left, exit
-			return
+			// No tasks left
+
+			// Check if the worker can exit
+			if p.workerCanExit(canExitDuringDispatch) {
+				return
+			}
+			continue
 		}
 	}
 }

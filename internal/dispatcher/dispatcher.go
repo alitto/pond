@@ -19,7 +19,6 @@ type Dispatcher[T any] struct {
 	waitGroup         sync.WaitGroup
 	batchSize         int
 	closed            atomic.Bool
-	Debug             bool
 }
 
 // NewDispatcher creates a generic dispatcher that can receive values from multiple goroutines in a thread-safe manner
@@ -28,7 +27,7 @@ func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize
 	dispatcher := &Dispatcher[T]{
 		ctx:               ctx,
 		buffer:            linkedbuffer.NewLinkedBuffer[T](10, batchSize),
-		bufferHasElements: make(chan struct{}, 1), // This channel needs to have size 2 in case an element is written to the buffer while the dispatcher is processing elements
+		bufferHasElements: make(chan struct{}, 1),
 		dispatchFunc:      dispatchFunc,
 		batchSize:         batchSize,
 	}
@@ -37,10 +36,6 @@ func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize
 	go dispatcher.run(ctx)
 
 	return dispatcher
-}
-
-func (d *Dispatcher[T]) EnableDebug() {
-	d.buffer.Debug = true
 }
 
 // Write writes values to the dispatcher
@@ -122,9 +117,6 @@ func (d *Dispatcher[T]) run(ctx context.Context) {
 
 				// Submit the next batch of values
 				d.dispatchFunc(batch[0:batchSize])
-
-				// Reset batch
-				//batch = batch[:0]
 			}
 
 			if !ok || d.closed.Load() {
