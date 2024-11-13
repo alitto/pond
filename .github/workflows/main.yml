@@ -23,7 +23,7 @@ jobs:
         go-version: ${{ matrix.go-version }}
 
     - name: Test
-      run: make test
+      run: make test-ci
   codecov:
     name: Coverage report
     runs-on: ubuntu-latest

@@ -36,8 +36,9 @@ func TestResultTaskGroupWait(t *testing.T) {
 
 func TestResultTaskGroupWaitWithError(t *testing.T) {
 
-	group := NewResultPool[int](1).
-		NewGroup()
+	pool := NewResultPool[int](1)
+
+	group := pool.NewGroup()
 
 	sampleErr := errors.New("sample error")
 

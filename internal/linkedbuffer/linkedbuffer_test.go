@@ -91,3 +91,42 @@ func TestLinkedBufferLen(t *testing.T) {
 	buf.readCount.Add(1)
 	assert.Equal(t, uint64(0), buf.Len())
 }
+
+func TestLinkedBufferWithReusedBuffer(t *testing.T) {
+
+	buf := NewLinkedBuffer[int](2, 1)
+
+	values := make([]int, 1)
+
+	buf.Write([]int{1})
+	buf.Write([]int{2})
+
+	n := buf.Read(values)
+
+	assert.Equal(t, 1, n)
+	assert.Equal(t, 1, values[0])
+
+	assert.Equal(t, 1, len(values))
+	assert.Equal(t, 1, cap(values))
+
+	n = buf.Read(values)
+
+	assert.Equal(t, 1, n)
+	assert.Equal(t, 1, len(values))
+	assert.Equal(t, 2, values[0])
+
+	buf.Write([]int{3})
+	buf.Write([]int{4})
+
+	n = buf.Read(values)
+
+	assert.Equal(t, 1, n)
+	assert.Equal(t, 1, len(values))
+	assert.Equal(t, 3, values[0])
+
+	n = buf.Read(values)
+
+	assert.Equal(t, 1, n)
+	assert.Equal(t, 1, len(values))
+	assert.Equal(t, 4, values[0])
+}

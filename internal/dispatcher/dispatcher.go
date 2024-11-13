@@ -30,7 +30,6 @@ func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize
 		bufferHasElements: make(chan struct{}, 1),
 		dispatchFunc:      dispatchFunc,
 		batchSize:         batchSize,
-		closed:            atomic.Bool{},
 	}
 
 	dispatcher.waitGroup.Add(1)
@@ -118,9 +117,6 @@ func (d *Dispatcher[T]) run(ctx context.Context) {
 
 				// Submit the next batch of values
 				d.dispatchFunc(batch[0:batchSize])
-
-				// Reset batch
-				batch = batch[:0]
 			}
 
 			if !ok || d.closed.Load() {
