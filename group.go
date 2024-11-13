@@ -104,7 +104,7 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 
 	g.taskWaitGroup.Add(1)
 
-	err := g.pool.Go(func() {
+	err := g.pool.dispatcher.Write(func() error {
 		defer g.taskWaitGroup.Done()
 
 		// Check if the context has been cancelled to prevent running tasks that are not needed
@@ -112,7 +112,7 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 			g.futureResolver(index, &result[O]{
 				Err: err,
 			}, err)
-			return
+			return err
 		}
 
 		// Invoke the task
@@ -122,6 +122,8 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 			Output: output,
 			Err:    err,
 		}, err)
+
+		return err
 	})
 
 	if err != nil {
