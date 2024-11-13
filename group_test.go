@@ -323,3 +323,58 @@ func TestTaskGroupDone(t *testing.T) {
 
 	assert.Equal(t, int32(5), executedCount.Load())
 }
+
+func TestTaskGroupMetrics(t *testing.T) {
+	pool := NewPool(1)
+
+	group := pool.NewGroup()
+
+	for i := 0; i < 9; i++ {
+		group.Submit(func() {
+			time.Sleep(1 * time.Millisecond)
+		})
+	}
+
+	// The last task will return an error
+	sampleErr := errors.New("sample error")
+	group.SubmitErr(func() error {
+		time.Sleep(1 * time.Millisecond)
+		return sampleErr
+	})
+
+	err := group.Wait()
+
+	time.Sleep(10 * time.Millisecond)
+
+	assert.Equal(t, sampleErr, err)
+	assert.Equal(t, uint64(10), pool.SubmittedTasks())
+	assert.Equal(t, uint64(9), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(1), pool.FailedTasks())
+}
+
+func TestTaskGroupMetricsWithCancelledContext(t *testing.T) {
+	pool := NewPool(1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	group := pool.NewGroupContext(ctx)
+
+	for i := 0; i < 10; i++ {
+		i := i
+		group.Submit(func() {
+			time.Sleep(20 * time.Millisecond)
+			if i == 4 {
+				cancel()
+			}
+		})
+	}
+	err := group.Wait()
+
+	time.Sleep(10 * time.Millisecond)
+
+	assert.Equal(t, err, context.Canceled)
+	assert.Equal(t, uint64(10), pool.SubmittedTasks())
+	assert.Equal(t, uint64(5), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(5), pool.FailedTasks())
+}
