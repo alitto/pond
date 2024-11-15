@@ -253,10 +253,9 @@ results, err := group.Wait()
 // results = ["Task #0", "Task #1", ..., "Task #19"] and err = nil
 ```
 
-### Submitting a group of tasks associated with a context
+### Stopping a group of tasks when a context is cancelled
 
-If you need to submit a group of tasks that are associated with a context, you can pass the context directly to the task function.
-Just make sure to handle the context in the task function to stop the task when the context is cancelled.
+If you need to submit a group of tasks that are associated with a context and stop them when the context is cancelled, you can pass the context directly to the task function.
 
 ``` go
 // Create a pool with limited concurrency
@@ -266,7 +265,7 @@ pool := pond.NewPool(10)
 ctx, cancel := context.WithCancel(context.Background())
 
 // Create a task group
-group := pool.NewGroup()
+group := pool.NewGroupContext(ctx)
 
 // Submit a group of tasks
 for i := 0; i < 20; i++ {
