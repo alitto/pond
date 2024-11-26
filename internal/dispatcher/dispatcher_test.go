@@ -151,3 +151,28 @@ func TestDispatcherWriteAfterClose(t *testing.T) {
 	assert.Equal(t, uint64(0), dispatcher.WriteCount())
 	assert.Equal(t, uint64(0), dispatcher.ReadCount())
 }
+
+func TestDispatcherWriteAfterCloseConcurrent(t *testing.T) {
+
+	ctx := context.Background()
+
+	dispatcher := NewDispatcher(ctx, func(t []int) {}, 1024)
+
+	wg := sync.WaitGroup{}
+	defer wg.Wait()
+
+	for i := 0; i < 1024; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			assert.NotPanics(t, func() {
+				dispatcher.Write(1)
+			})
+		}()
+	}
+
+	assert.NotPanics(t, func() {
+		dispatcher.Close()
+	})
+}

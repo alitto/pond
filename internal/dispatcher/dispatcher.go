@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"github.com/alitto/pond/v2/internal/linkedbuffer"
 )
@@ -18,7 +17,7 @@ type Dispatcher[T any] struct {
 	dispatchFunc      func([]T)
 	waitGroup         sync.WaitGroup
 	batchSize         int
-	closed            atomic.Bool
+	closed            chan struct{}
 }
 
 // NewDispatcher creates a generic dispatcher that can receive values from multiple goroutines in a thread-safe manner
@@ -30,6 +29,7 @@ func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize
 		bufferHasElements: make(chan struct{}, 1),
 		dispatchFunc:      dispatchFunc,
 		batchSize:         batchSize,
+		closed:            make(chan struct{}),
 	}
 
 	dispatcher.waitGroup.Add(1)
@@ -41,8 +41,15 @@ func NewDispatcher[T any](ctx context.Context, dispatchFunc func([]T), batchSize
 // Write writes values to the dispatcher
 func (d *Dispatcher[T]) Write(values ...T) error {
 	// Check if the dispatcher has been closed
-	if d.closed.Load() || d.ctx.Err() != nil {
+	select {
+	case <-d.ctx.Done():
 		return ErrDispatcherClosed
+
+	case <-d.closed:
+		return ErrDispatcherClosed
+
+	default:
+
 	}
 
 	// Append elements to the buffer
@@ -74,8 +81,7 @@ func (d *Dispatcher[T]) Len() uint64 {
 
 // Close closes the dispatcher
 func (d *Dispatcher[T]) Close() {
-	d.closed.Store(true)
-	close(d.bufferHasElements)
+	close(d.closed)
 }
 
 // CloseAndWait closes the dispatcher and waits for all pending elements to be processed
@@ -84,12 +90,26 @@ func (d *Dispatcher[T]) CloseAndWait() {
 	d.waitGroup.Wait()
 }
 
+// readRemaining tries to read all pending elements
+func (d *Dispatcher[T]) readRemaining() {
+	batch := make([]T, d.batchSize)
+
+	// Attempt to read all pending elements
+	for {
+		batchSize := d.buffer.Read(batch)
+
+		if batchSize == 0 {
+			break
+		}
+
+		// Submit the next batch of values
+		d.dispatchFunc(batch[0:batchSize])
+	}
+}
+
 // run reads elements from the buffer and processes them using the dispatchFunc
 func (d *Dispatcher[T]) run(ctx context.Context) {
 	defer d.waitGroup.Done()
-
-	batch := make([]T, d.batchSize)
-	var batchSize int
 
 	for {
 
@@ -105,24 +125,17 @@ func (d *Dispatcher[T]) run(ctx context.Context) {
 		case <-ctx.Done():
 			// Context cancelled, exit
 			return
-		case _, ok := <-d.bufferHasElements:
-
-			// Attempt to read all pending elements
-			for {
-				batchSize = d.buffer.Read(batch)
-
-				if batchSize == 0 {
-					break
-				}
-
-				// Submit the next batch of values
-				d.dispatchFunc(batch[0:batchSize])
+		case <-d.closed:
+			// Dispatcher closed, exit
+			select {
+			case <-d.bufferHasElements:
+				d.readRemaining()
+			default:
 			}
 
-			if !ok || d.closed.Load() {
-				// Channel was closed, read all remaining elements and exit
-				return
-			}
+			return
+		case <-d.bufferHasElements:
+			d.readRemaining()
 		}
 	}
 }
