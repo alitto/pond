@@ -54,3 +54,15 @@ func PanicsWithError(t *testing.T, expected string, f func()) {
 	}()
 	f()
 }
+
+/**
+ * Asserts that the function not panics.
+ */
+func NotPanics(t *testing.T, f func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("No panic was expected, but got %T(%v)", r, r)
+		}
+	}()
+	f()
+}
