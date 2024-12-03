@@ -393,9 +393,9 @@ Each worker pool instance exposes useful metrics that can be queried through the
 - `pool.RunningWorkers() int64`: Current number of running workers
 - `pool.SubmittedTasks() uint64`: Total number of tasks submitted since the pool was created
 - `pool.WaitingTasks() uint64`: Current number of tasks in the queue that are waiting to be executed
-- `pool.SuccessfulTasks() uint64`: Total number of tasks that have successfully completed their exection since the pool was created
+- `pool.SuccessfulTasks() uint64`: Total number of tasks that have successfully completed their execution since the pool was created
 - `pool.FailedTasks() uint64`: Total number of tasks that completed with panic since the pool was created
-- `pool.CompletedTasks() uint64`: Total number of tasks that have completed their exection either successfully or with panic since the pool was created
+- `pool.CompletedTasks() uint64`: Total number of tasks that have completed their execution either successfully or with panic since the pool was created
 
 In our [Prometheus example](./examples/prometheus/main.go) we showcase how to configure collectors for these metrics and expose them to Prometheus.
 
