@@ -3,6 +3,7 @@ package pond
 import (
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 )
 
@@ -62,7 +63,7 @@ func wrapTask[R any, C func(error) | func(R, error)](task any, callback C) func(
 func invokeTask[R any](task any) (output R, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			err = fmt.Errorf("%w: %v", ErrPanic, p)
+			err = fmt.Errorf("%w: %+v, %s", ErrPanic, p, string(debug.Stack()))
 			return
 		}
 	}()
