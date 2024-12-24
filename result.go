@@ -16,8 +16,8 @@ type ResultPool[R any] interface {
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
 	SubmitErr(task func() (R, error)) Result[R]
 
-	// Creates a new subpool with the specified maximum concurrency.
-	NewSubpool(maxConcurrency int) ResultPool[R]
+	// Creates a new subpool with the specified maximum concurrency and options.
+	NewSubpool(maxConcurrency int, options ...Option) ResultPool[R]
 
 	// Creates a new task group.
 	NewGroup() ResultTaskGroup[R]
@@ -56,8 +56,8 @@ func (p *resultPool[R]) submit(task any) Result[R] {
 	return future
 }
 
-func (p *resultPool[R]) NewSubpool(maxConcurrency int) ResultPool[R] {
-	return newResultSubpool[R](maxConcurrency, p.Context(), p.pool)
+func (p *resultPool[R]) NewSubpool(maxConcurrency int, options ...Option) ResultPool[R] {
+	return newResultSubpool[R](maxConcurrency, p.Context(), p.pool, options...)
 }
 
 func NewResultPool[R any](maxConcurrency int, options ...Option) ResultPool[R] {

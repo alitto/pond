@@ -191,3 +191,111 @@ func TestSubpoolStoppedAfterCancel(t *testing.T) {
 
 	assert.Equal(t, ErrPoolStopped, err)
 }
+
+func TestSubpoolWithDifferentLimits(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	pool := NewPool(7, WithContext(ctx))
+
+	subpool1 := pool.NewSubpool(1)
+	subpool2 := pool.NewSubpool(2)
+	subpool3 := pool.NewSubpool(3)
+
+	taskStarted := make(chan struct{}, 10)
+	taskWait := make(chan struct{})
+
+	var task = func() func() {
+		return func() {
+			taskStarted <- struct{}{}
+			<-taskWait
+		}
+	}
+
+	// Submit tasks to subpool1 and wait for 1 task to start
+	for i := 0; i < 10; i++ {
+		subpool1.Submit(task())
+	}
+	<-taskStarted
+
+	// Submit tasks to subpool2 and wait for 2 tasks to start
+	for i := 0; i < 10; i++ {
+		subpool2.Submit(task())
+	}
+	<-taskStarted
+	<-taskStarted
+
+	// Submit tasks to subpool3 and wait for 3 tasks to start
+	for i := 0; i < 10; i++ {
+		subpool3.Submit(task())
+	}
+	<-taskStarted
+	<-taskStarted
+	<-taskStarted
+
+	// Submit tasks to the main pool and wait for 1 to start
+	for i := 0; i < 10; i++ {
+		pool.Submit(task())
+	}
+	<-taskStarted
+
+	// Verify concurrency of each pool
+	assert.Equal(t, int64(1), subpool1.RunningWorkers())
+	assert.Equal(t, int64(2), subpool2.RunningWorkers())
+	assert.Equal(t, int64(3), subpool3.RunningWorkers())
+	assert.Equal(t, int64(7), pool.RunningWorkers())
+
+	assert.Equal(t, uint64(0), subpool1.CompletedTasks())
+	assert.Equal(t, uint64(0), subpool2.CompletedTasks())
+	assert.Equal(t, uint64(0), subpool3.CompletedTasks())
+	assert.Equal(t, uint64(0), pool.CompletedTasks())
+
+	// Cancel the context to abort pending tasks
+	cancel()
+
+	// Unblock all running tasks
+	close(taskWait)
+
+	subpool1.StopAndWait()
+	subpool2.StopAndWait()
+	subpool3.StopAndWait()
+	pool.StopAndWait()
+
+	assert.Equal(t, uint64(1), subpool1.CompletedTasks())
+	assert.Equal(t, uint64(2), subpool2.CompletedTasks())
+	assert.Equal(t, uint64(3), subpool3.CompletedTasks())
+	assert.Equal(t, uint64(7), pool.CompletedTasks())
+}
+
+func TestSubpoolWithQueueSizeOverride(t *testing.T) {
+	pool := NewPool(10, WithQueueSize(10))
+
+	subpool := pool.NewSubpool(1, WithQueueSize(2), WithNonBlocking(true))
+
+	taskStarted := make(chan struct{}, 10)
+	taskWait := make(chan struct{})
+
+	var task = func() func() {
+		return func() {
+			taskStarted <- struct{}{}
+			<-taskWait
+		}
+	}
+
+	// Submit tasks to subpool and wait for it to start
+	subpool.Submit(task())
+	<-taskStarted
+
+	// Submit more tasks to fill up the queue
+	for i := 0; i < 10; i++ {
+		subpool.Submit(task())
+	}
+
+	// 7 tasks should have been discarded
+	assert.Equal(t, int64(1), subpool.RunningWorkers())
+	assert.Equal(t, uint64(3), subpool.SubmittedTasks())
+
+	// Unblock all running tasks
+	close(taskWait)
+
+	subpool.StopAndWait()
+	pool.StopAndWait()
+}
