@@ -2,6 +2,7 @@ package pond
 
 import (
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -34,7 +35,7 @@ func TestResultPoolSubmitTaskWithPanic(t *testing.T) {
 	output, err := task.Wait()
 
 	assert.True(t, errors.Is(err, ErrPanic))
-	assert.Equal(t, "task panicked: dummy panic", err.Error())
+	assert.True(t, strings.HasPrefix(err.Error(), "task panicked: dummy panic"))
 	assert.Equal(t, 0, output)
 }
 

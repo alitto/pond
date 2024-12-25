@@ -2,6 +2,7 @@ package pond
 
 import (
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestSubmitWithPanic(t *testing.T) {
 	err := task.Wait()
 
 	assert.True(t, errors.Is(err, ErrPanic))
-	assert.Equal(t, "task panicked: dummy panic", err.Error())
+	assert.True(t, strings.HasPrefix(err.Error(), "task panicked: dummy panic"))
 }
 
 func TestNewGroup(t *testing.T) {

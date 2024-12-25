@@ -3,6 +3,7 @@ package pond
 import (
 	"context"
 	"errors"
+	"regexp"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,14 +49,29 @@ func TestPoolSubmitWithPanic(t *testing.T) {
 
 	pool := NewPool(100)
 
+	sampleErr := errors.New("sample error")
+
 	task := pool.Submit(func() {
-		panic("dummy panic")
+		panic(sampleErr)
 	})
 
 	err := task.Wait()
 
+	// The returned error should be a wrapped error containing the panic error.
 	assert.True(t, errors.Is(err, ErrPanic))
-	assert.Equal(t, "task panicked: dummy panic", err.Error())
+	assert.True(t, errors.Is(err, sampleErr))
+
+	wrappedErrors := (err).(interface {
+		Unwrap() []error
+	}).Unwrap()
+
+	assert.Equal(t, 2, len(wrappedErrors))
+	assert.Equal(t, ErrPanic, wrappedErrors[0])
+	assert.Equal(t, sampleErr, wrappedErrors[1])
+
+	matches, err := regexp.MatchString(`task panicked: sample error, goroutine \d+ \[running\]:\n\s*runtime/debug\.Stack\(\)`, err.Error())
+	assert.True(t, matches)
+	assert.Equal(t, nil, err)
 }
 
 func TestPoolSubmitWithErr(t *testing.T) {
