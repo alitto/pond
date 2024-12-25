@@ -1,6 +1,7 @@
 package linkedbuffer
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 )
@@ -125,7 +126,8 @@ func (b *LinkedBuffer[T]) Len() uint64 {
 	readCount := b.readCount.Load()
 
 	if writeCount < readCount {
-		return 0 // Make sure we don't return a negative value
+		// The writeCount counter wrapped around
+		return math.MaxUint64 - readCount + writeCount
 	}
 
 	return writeCount - readCount

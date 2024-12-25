@@ -192,19 +192,23 @@ func TestTaskGroupWithContextCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
-	}()
+	taskStarted := make(chan struct{})
 
-	err := group.SubmitErr(func() error {
+	task := group.SubmitErr(func() error {
+		taskStarted <- struct{}{}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 			return nil
 		}
-	}).Wait()
+	})
+
+	<-taskStarted
+	cancel()
+
+	err := task.Wait()
 
 	assert.Equal(t, context.Canceled, err)
 }

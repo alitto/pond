@@ -35,11 +35,13 @@ Some common use cases include:
 - Complete pool metrics such as number of running workers, tasks waiting in the queue [and more](#metrics--monitoring)
 - Configurable parent context to stop all workers when it is cancelled
 - **New features in v2**:
-  - Unbounded task queues
+  - Bounded or Unbounded task queues
   - Submission of tasks that return results
   - Awaitable task completion
   - Type safe APIs for tasks that return errors or results
   - Panics recovery (panics are captured and returned as errors)
+  - Subpools with a fraction of the parent pool's maximum number of workers
+  - Blocking and non-blocking submission of tasks when the queue is full
 - [API reference](https://pkg.go.dev/github.com/alitto/pond/v2)
 
 ## Installation
@@ -384,6 +386,24 @@ if err != nil {
 } else {
 	fmt.Println("Task completed successfully")
 }
+```
+
+### Bounded task queues (v2)
+
+By default, task queues are unbounded, meaning that tasks are queued indefinitely until the pool is stopped (or the process runs out of memory). You can limit the number of tasks that can be queued by setting a queue size when creating a pool (`WithQueueSize` option).
+
+``` go
+// Create a pool with a maximum of 10 tasks in the queue
+pool := pond.NewPool(1, pond.WithQueueSize(10))
+```
+
+**Blocking vs non-blocking task submission** 
+
+When a pool defines a queue size (bounded), you can also specify how to handle tasks submitted when the queue is full. By default, task submission blocks until there is space in the queue (blocking mode), but you can change this behavior to non-blocking by setting the `WithNonBlocking` option to `true` when creating a pool. If the queue is full and non-blocking task submission is enabled, the task is dropped and an error is returned (`ErrQueueFull`).
+
+``` go
+// Create a pool with a maximum of 10 tasks in the queue and non-blocking task submission
+pool := pond.NewPool(1, pond.WithQueueSize(10), pond.WithNonBlocking(true))
 ```
 
 ### Metrics & monitoring
