@@ -1,6 +1,7 @@
 package linkedbuffer
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -88,8 +89,10 @@ func TestLinkedBufferLen(t *testing.T) {
 
 	assert.Equal(t, uint64(0), buf.Len())
 
-	buf.readCount.Add(1)
-	assert.Equal(t, uint64(0), buf.Len())
+	// Test wrap around
+	buf.writeCount.Add(math.MaxUint64)
+	buf.readCount.Add(math.MaxUint64 - 3)
+	assert.Equal(t, uint64(3), buf.Len())
 }
 
 func TestLinkedBufferWithReusedBuffer(t *testing.T) {

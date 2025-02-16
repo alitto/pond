@@ -1,45 +1,11 @@
-package pond
+package pool
 
 import (
 	"errors"
 	"fmt"
-	"sync"
-
-	"github.com/alitto/pond/v2/internal/semaphore"
 )
 
 var ErrPanic = errors.New("task panicked")
-
-type subpoolTask[R any] struct {
-	task          any
-	queueSem      *semaphore.Weighted
-	sem           *semaphore.Weighted
-	waitGroup     *sync.WaitGroup
-	updateMetrics func(error)
-}
-
-func (t subpoolTask[R]) Run() {
-	defer t.Close()
-
-	// Release task queue semaphore when task is pulled from queue
-	if t.queueSem != nil {
-		t.queueSem.Release(1)
-	}
-
-	_, err := invokeTask[R](t.task)
-
-	if t.updateMetrics != nil {
-		t.updateMetrics(err)
-	}
-}
-
-func (t subpoolTask[R]) Close() {
-	// Release semaphore
-	t.sem.Release(1)
-
-	// Decrement wait group
-	t.waitGroup.Done()
-}
 
 type wrappedTask[R any, C func(error) | func(R, error)] struct {
 	task     any

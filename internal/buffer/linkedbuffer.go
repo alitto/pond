@@ -1,8 +1,7 @@
-package linkedbuffer
+package buffer
 
 import (
 	"math"
-	"sync"
 	"sync/atomic"
 )
 
@@ -10,19 +9,18 @@ import (
 // It is implemented using a linked list of buffers.
 type LinkedBuffer[T any] struct {
 	// Reader points to the buffer that is currently being read
-	readBuffer *Buffer[T]
+	readBuffer *buffer[T]
 
 	// Writer points to the buffer that is currently being written
-	writeBuffer *Buffer[T]
+	writeBuffer *buffer[T]
 
 	maxCapacity int
 	writeCount  atomic.Uint64
 	readCount   atomic.Uint64
-	mutex       sync.Mutex
 }
 
 func NewLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
-	initialBuffer := NewBuffer[T](initialCapacity)
+	initialBuffer := newBuffer[T](initialCapacity)
 
 	buffer := &LinkedBuffer[T]{
 		readBuffer:  initialBuffer,
@@ -34,80 +32,61 @@ func NewLinkedBuffer[T any](initialCapacity, maxCapacity int) *LinkedBuffer[T] {
 }
 
 // Write writes values to the buffer
-func (b *LinkedBuffer[T]) Write(values []T) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+func (b *LinkedBuffer[T]) Write(value T) {
 
-	length := len(values)
-	nextIndex := 0
+	// Write elements
+	err := b.writeBuffer.Write(value)
 
-	// Append elements to the buffer
-	for {
-		// Write elements
-		n, err := b.writeBuffer.Write(values[nextIndex:])
-
-		if err == ErrEOF {
-			// Increase next buffer capacity
-			var newCapacity int
-			capacity := b.writeBuffer.Cap()
-			if capacity < 1024 {
-				newCapacity = capacity * 2
-			} else {
-				newCapacity = capacity + capacity/2
-			}
-			if newCapacity > b.maxCapacity {
-				newCapacity = b.maxCapacity
-			}
-
-			if b.writeBuffer.next == nil {
-				b.writeBuffer.next = NewBuffer[T](newCapacity)
-				b.writeBuffer = b.writeBuffer.next
-			}
-			continue
+	if err == ErrEOF {
+		// Increase next buffer capacity
+		var newCapacity int
+		capacity := b.writeBuffer.Cap()
+		if capacity < 1024 {
+			newCapacity = capacity * 2
+		} else {
+			newCapacity = capacity + capacity/2
+		}
+		if newCapacity > b.maxCapacity {
+			newCapacity = b.maxCapacity
 		}
 
-		nextIndex += n
-
-		if nextIndex >= length {
-			break
+		if b.writeBuffer.next == nil {
+			b.writeBuffer.next = newBuffer[T](newCapacity)
+			b.writeBuffer = b.writeBuffer.next
 		}
+
+		// Retry writing
+		b.Write(value)
+		return
 	}
 
 	// Increment written count
-	b.writeCount.Add(uint64(length))
+	b.writeCount.Add(1)
 }
 
 // Read reads values from the buffer and returns the number of elements read
-func (b *LinkedBuffer[T]) Read(values []T) int {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+func (b *LinkedBuffer[T]) Read() (value T, err error) {
+	// Read element
+	value, err = b.readBuffer.Read()
 
-	var readBuffer *Buffer[T]
-
-	for {
-		readBuffer = b.readBuffer
-
-		// Read element
-		n, err := readBuffer.Read(values)
-
-		if err == ErrEOF {
-			// Move to next buffer
-			if readBuffer.next == nil {
-				return n
-			}
-			if b.readBuffer != readBuffer.next {
-				b.readBuffer = readBuffer.next
-			}
-			continue
+	if err == ErrEOF {
+		if b.readBuffer.next == nil {
+			// No more elements to read
+			return
+		}
+		// Move to next read buffer
+		if b.readBuffer != b.readBuffer.next {
+			b.readBuffer = b.readBuffer.next
 		}
 
-		if n > 0 {
-			// Increment read count
-			b.readCount.Add(uint64(n))
-		}
-
-		return n
+		// Retry reading
+		return b.Read()
 	}
+
+	// Increment read count
+	b.readCount.Add(1)
+
+	return
 }
 
 // WriteCount returns the number of elements written to the buffer since it was created

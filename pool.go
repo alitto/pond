@@ -10,6 +10,7 @@ import (
 
 	"github.com/alitto/pond/v2/internal/dispatcher"
 	"github.com/alitto/pond/v2/internal/future"
+	"github.com/alitto/pond/v2/internal/semaphore"
 )
 
 var NUM_CPU = runtime.NumCPU()
@@ -17,10 +18,17 @@ var NUM_CPU = runtime.NumCPU()
 var MAX_TASKS_CHAN_LENGTH = NUM_CPU * 128
 
 var ErrPoolStopped = errors.New("pool stopped")
+var ErrQueueFull = errors.New("task queue is full")
 
 var poolStoppedFuture = func() Task {
 	future, resolve := future.NewFuture(context.Background())
 	resolve(ErrPoolStopped)
+	return future
+}()
+
+var poolQueueFullFuture = func() Task {
+	future, resolve := future.NewFuture(context.Background())
+	resolve(ErrQueueFull)
 	return future
 }()
 
@@ -46,6 +54,14 @@ type basePool interface {
 
 	// Returns the maximum concurrency of the pool.
 	MaxConcurrency() int
+
+	// Returns the size of the task queue.
+	QueueSize() int
+
+	// Returns true if the pool is non-blocking, meaning that it will not block when the task queue is full.
+	// In a non-blocking pool, tasks that cannot be submitted to the queue will be dropped.
+	// By default, pools are blocking, meaning that they will block when the task queue is full.
+	NonBlocking() bool
 
 	// Returns the context associated with this pool.
 	Context() context.Context
@@ -73,8 +89,8 @@ type Pool interface {
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
 	SubmitErr(task func() error) Task
 
-	// Creates a new subpool with the specified maximum concurrency.
-	NewSubpool(maxConcurrency int) Pool
+	// Creates a new subpool with the specified maximum concurrency and options.
+	NewSubpool(maxConcurrency int, options ...Option) Pool
 
 	// Creates a new task group.
 	NewGroup() TaskGroup
@@ -96,6 +112,9 @@ type pool struct {
 	dispatcherRunning   sync.Mutex
 	successfulTaskCount atomic.Uint64
 	failedTaskCount     atomic.Uint64
+	nonBlocking         bool
+	queueSize           int
+	queueSem            *semaphore.Weighted
 }
 
 func (p *pool) Context() context.Context {
@@ -108,6 +127,14 @@ func (p *pool) Stopped() bool {
 
 func (p *pool) MaxConcurrency() int {
 	return p.maxConcurrency
+}
+
+func (p *pool) QueueSize() int {
+	return p.queueSize
+}
+
+func (p *pool) NonBlocking() bool {
+	return p.nonBlocking
 }
 
 func (p *pool) RunningWorkers() int64 {
@@ -159,9 +186,23 @@ func (p *pool) SubmitErr(task func() error) Task {
 }
 
 func (p *pool) submit(task any) Task {
-	future, resolve := future.NewFuture(p.Context())
+	ctx := p.Context()
+	future, resolve := future.NewFuture(ctx)
 
 	wrapped := wrapTask[struct{}, func(error)](task, resolve)
+
+	if p.queueSem != nil {
+		if p.nonBlocking {
+			if !p.queueSem.TryAcquire(1) {
+				return poolQueueFullFuture
+			}
+		} else {
+			if err := p.queueSem.Acquire(ctx, 1); err != nil {
+				resolve(err)
+				return future
+			}
+		}
+	}
 
 	if err := p.dispatcher.Write(wrapped); err != nil {
 		return poolStoppedFuture
@@ -186,8 +227,8 @@ func (p *pool) StopAndWait() {
 	p.Stop().Wait()
 }
 
-func (p *pool) NewSubpool(maxConcurrency int) Pool {
-	return newSubpool(maxConcurrency, p.ctx, p)
+func (p *pool) NewSubpool(maxConcurrency int, options ...Option) Pool {
+	return newSubpool(maxConcurrency, p.Context(), p, options...)
 }
 
 func (p *pool) NewGroup() TaskGroup {
@@ -297,6 +338,11 @@ func (p *pool) worker() {
 				return
 			}
 
+			// We have a task to execute, release the semaphore since it is no longer in the queue
+			if p.queueSem != nil {
+				p.queueSem.Release(1)
+			}
+
 			// Execute task
 			_, err := invokeTask[any](task)
 
@@ -342,6 +388,10 @@ func newPool(maxConcurrency int, options ...Option) *pool {
 	}
 
 	pool.ctx, pool.cancel = context.WithCancelCause(pool.ctx)
+
+	if pool.queueSize > 0 {
+		pool.queueSem = semaphore.NewWeighted(pool.queueSize)
+	}
 
 	pool.dispatcher = dispatcher.NewDispatcher(pool.ctx, pool.dispatch, tasksLen)
 

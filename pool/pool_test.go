@@ -1,4 +1,4 @@
-package pond
+package pool
 
 import (
 	"context"
@@ -140,7 +140,7 @@ func TestPoolMetrics(t *testing.T) {
 
 func TestPoolSubmitOnStoppedPool(t *testing.T) {
 
-	pool := newPool(100)
+	pool := newPool(100, nil)
 
 	pool.Submit(func() {})
 

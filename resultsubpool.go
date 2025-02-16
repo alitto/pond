@@ -7,16 +7,17 @@ import (
 	"sync"
 
 	"github.com/alitto/pond/v2/internal/dispatcher"
+	"github.com/alitto/pond/v2/internal/semaphore"
 )
 
 type resultSubpool[R any] struct {
 	*resultPool[R]
 	parent    *pool
 	waitGroup sync.WaitGroup
-	sem       chan struct{}
+	sem       *semaphore.Weighted
 }
 
-func newResultSubpool[R any](maxConcurrency int, ctx context.Context, parent *pool) ResultPool[R] {
+func newResultSubpool[R any](maxConcurrency int, ctx context.Context, parent *pool, options ...Option) ResultPool[R] {
 
 	if maxConcurrency == 0 {
 		maxConcurrency = parent.MaxConcurrency()
@@ -35,15 +36,27 @@ func newResultSubpool[R any](maxConcurrency int, ctx context.Context, parent *po
 		tasksLen = MAX_TASKS_CHAN_LENGTH
 	}
 
-	subpool := &resultSubpool[R]{
-		resultPool: &resultPool[R]{
-			pool: &pool{
-				ctx:            ctx,
-				maxConcurrency: maxConcurrency,
-			},
+	resultPool := &resultPool[R]{
+		pool: &pool{
+			ctx:            ctx,
+			maxConcurrency: maxConcurrency,
 		},
-		parent: parent,
-		sem:    make(chan struct{}, maxConcurrency),
+	}
+
+	for _, option := range options {
+		option(resultPool.pool)
+	}
+
+	ctx = resultPool.Context()
+
+	if resultPool.pool.queueSize > 0 {
+		resultPool.pool.queueSem = semaphore.NewWeighted(resultPool.pool.queueSize)
+	}
+
+	subpool := &resultSubpool[R]{
+		resultPool: resultPool,
+		parent:     parent,
+		sem:        semaphore.NewWeighted(maxConcurrency),
 	}
 
 	subpool.pool.dispatcher = dispatcher.NewDispatcher(ctx, subpool.dispatch, tasksLen)
@@ -53,27 +66,38 @@ func newResultSubpool[R any](maxConcurrency int, ctx context.Context, parent *po
 
 func (p *resultSubpool[R]) dispatch(incomingTasks []any) {
 
-	p.waitGroup.Add(len(incomingTasks))
+	ctx := p.Context()
 
 	// Submit tasks
 	for _, task := range incomingTasks {
 
-		select {
-		case <-p.Context().Done():
-			// Context canceled, exit
-			return
-		case p.sem <- struct{}{}:
-			// Acquired the semaphore, submit another task
+		// Acquire semaphore to limit concurrency
+		if p.nonBlocking {
+			if ok := p.sem.TryAcquire(1); !ok {
+				// Context canceled, exit
+				return
+			}
+		} else {
+			if err := p.sem.Acquire(ctx, 1); err != nil {
+				// Context canceled, exit
+				return
+			}
 		}
 
 		subpoolTask := subpoolTask[any]{
 			task:          task,
 			sem:           p.sem,
+			queueSem:      p.queueSem,
 			waitGroup:     &p.waitGroup,
 			updateMetrics: p.updateMetrics,
 		}
 
-		p.parent.Go(subpoolTask.Run)
+		p.waitGroup.Add(1)
+
+		if err := p.parent.Go(subpoolTask.Run); err != nil {
+			// We failed to submit the task, release semaphore
+			subpoolTask.Close()
+		}
 	}
 }
 
@@ -82,11 +106,13 @@ func (p *resultSubpool[R]) Stop() Task {
 		p.dispatcher.CloseAndWait()
 
 		p.waitGroup.Wait()
-
-		close(p.sem)
 	})
 }
 
 func (p *resultSubpool[R]) StopAndWait() {
 	p.Stop().Wait()
+}
+
+func (p *resultSubpool[R]) RunningWorkers() int64 {
+	return int64(p.sem.Acquired())
 }
