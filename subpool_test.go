@@ -115,8 +115,8 @@ func TestSubpoolMetrics(t *testing.T) {
 
 	assert.Equal(t, uint64(20), pool.SubmittedTasks())
 	assert.Equal(t, uint64(20), pool.CompletedTasks())
-	assert.Equal(t, uint64(3), pool.FailedTasks())
-	assert.Equal(t, uint64(17), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(8), pool.FailedTasks())
+	assert.Equal(t, uint64(12), pool.SuccessfulTasks())
 	assert.Equal(t, uint64(0), pool.WaitingTasks())
 
 	assert.Equal(t, uint64(10), subpool.SubmittedTasks())
@@ -159,7 +159,7 @@ func TestSubpoolStop(t *testing.T) {
 func TestSubpoolMaxConcurrency(t *testing.T) {
 	pool := NewPool(10)
 
-	assert.PanicsWithError(t, "maxConcurrency must be greater or equal to 0", func() {
+	assert.PanicsWithError(t, "maxConcurrency must be greater than 0", func() {
 		pool.NewSubpool(-1)
 	})
 
@@ -263,6 +263,41 @@ func TestSubpoolWithDifferentLimits(t *testing.T) {
 	assert.Equal(t, uint64(2), subpool2.CompletedTasks())
 	assert.Equal(t, uint64(3), subpool3.CompletedTasks())
 	assert.Equal(t, uint64(7), pool.CompletedTasks())
+}
+
+func TestSubpoolWithOverlappingConcurrency(t *testing.T) {
+	taskDuration := 1 * time.Millisecond
+
+	pool := NewPool(1)
+	subpool := pool.NewSubpool(1)
+
+	var executedCount atomic.Int64
+
+	subpool.Submit(func() {
+		time.Sleep(taskDuration)
+		executedCount.Add(1)
+		assert.Equal(t, int64(1), pool.RunningWorkers())
+		assert.Equal(t, int64(1), subpool.RunningWorkers())
+	})
+
+	pool.Submit(func() {
+		time.Sleep(taskDuration)
+		executedCount.Add(1)
+		assert.Equal(t, int64(1), pool.RunningWorkers())
+		assert.Equal(t, int64(1), subpool.RunningWorkers())
+	})
+
+	subpool.Submit(func() {
+		time.Sleep(taskDuration)
+		executedCount.Add(1)
+		assert.Equal(t, int64(1), pool.RunningWorkers())
+		assert.Equal(t, int64(1), subpool.RunningWorkers())
+	})
+
+	subpool.StopAndWait()
+	pool.StopAndWait()
+
+	assert.Equal(t, int64(3), executedCount.Load())
 }
 
 func TestSubpoolWithQueueSizeOverride(t *testing.T) {

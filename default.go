@@ -1,7 +1,7 @@
 package pond
 
 // defaultPool is the default pool used by the package-level functions.
-var defaultPool = newPool(0)
+var defaultPool = newPool(0, nil)
 
 // Submit submits a task to the default pool and returns a future that can be used to wait for the task to complete.
 func Submit(task func()) Task {

@@ -104,7 +104,7 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 
 	g.taskWaitGroup.Add(1)
 
-	err := g.pool.dispatcher.Write(func() error {
+	err := g.pool.submit(func() error {
 		defer g.taskWaitGroup.Done()
 
 		// Check if the context has been cancelled to prevent running tasks that are not needed
