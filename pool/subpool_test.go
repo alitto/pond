@@ -1,4 +1,4 @@
-package pond
+package pool
 
 import (
 	"context"
@@ -113,10 +113,10 @@ func TestSubpoolMetrics(t *testing.T) {
 	subpool.StopAndWait()
 	pool.StopAndWait()
 
-	assert.Equal(t, uint64(20), pool.SubmittedTasks())
-	assert.Equal(t, uint64(20), pool.CompletedTasks())
+	assert.Equal(t, uint64(10), pool.SubmittedTasks())
+	assert.Equal(t, uint64(10), pool.CompletedTasks())
 	assert.Equal(t, uint64(3), pool.FailedTasks())
-	assert.Equal(t, uint64(17), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(7), pool.SuccessfulTasks())
 	assert.Equal(t, uint64(0), pool.WaitingTasks())
 
 	assert.Equal(t, uint64(10), subpool.SubmittedTasks())
@@ -159,7 +159,7 @@ func TestSubpoolStop(t *testing.T) {
 func TestSubpoolMaxConcurrency(t *testing.T) {
 	pool := NewPool(10)
 
-	assert.PanicsWithError(t, "maxConcurrency must be greater or equal to 0", func() {
+	assert.PanicsWithError(t, "maxConcurrency must be greater than 0", func() {
 		pool.NewSubpool(-1)
 	})
 

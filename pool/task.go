@@ -1,46 +1,11 @@
-package pond
+package pool
 
 import (
 	"errors"
 	"fmt"
-	"runtime/debug"
-	"sync"
-
-	"github.com/alitto/pond/v2/internal/semaphore"
 )
 
 var ErrPanic = errors.New("task panicked")
-
-type subpoolTask[R any] struct {
-	task          any
-	queueSem      *semaphore.Weighted
-	sem           *semaphore.Weighted
-	waitGroup     *sync.WaitGroup
-	updateMetrics func(error)
-}
-
-func (t subpoolTask[R]) Run() {
-	defer t.Close()
-
-	// Release task queue semaphore when task is pulled from queue
-	if t.queueSem != nil {
-		t.queueSem.Release(1)
-	}
-
-	_, err := invokeTask[R](t.task)
-
-	if t.updateMetrics != nil {
-		t.updateMetrics(err)
-	}
-}
-
-func (t subpoolTask[R]) Close() {
-	// Release semaphore
-	t.sem.Release(1)
-
-	// Decrement wait group
-	t.waitGroup.Done()
-}
 
 type wrappedTask[R any, C func(error) | func(R, error)] struct {
 	task     any
@@ -74,11 +39,7 @@ func wrapTask[R any, C func(error) | func(R, error)](task any, callback C) func(
 func invokeTask[R any](task any) (output R, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			if e, ok := p.(error); ok {
-				err = fmt.Errorf("%w: %w, %s", ErrPanic, e, debug.Stack())
-			} else {
-				err = fmt.Errorf("%w: %v, %s", ErrPanic, p, debug.Stack())
-			}
+			err = fmt.Errorf("%w: %v", ErrPanic, p)
 			return
 		}
 	}()

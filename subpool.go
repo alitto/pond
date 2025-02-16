@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/alitto/pond/v2/internal/dispatcher"
+	"github.com/alitto/pond/v2/internal/semaphore"
 )
 
 // subpool is a pool that is a subpool of another pool
@@ -14,10 +15,10 @@ type subpool struct {
 	*pool
 	parent    *pool
 	waitGroup sync.WaitGroup
-	sem       chan struct{}
+	sem       *semaphore.Weighted
 }
 
-func newSubpool(maxConcurrency int, ctx context.Context, parent *pool) Pool {
+func newSubpool(maxConcurrency int, ctx context.Context, parent *pool, options ...Option) Pool {
 
 	if maxConcurrency == 0 {
 		maxConcurrency = parent.MaxConcurrency()
@@ -36,13 +37,25 @@ func newSubpool(maxConcurrency int, ctx context.Context, parent *pool) Pool {
 		tasksLen = MAX_TASKS_CHAN_LENGTH
 	}
 
+	pool := &pool{
+		ctx:            ctx,
+		maxConcurrency: maxConcurrency,
+	}
+
+	for _, option := range options {
+		option(pool)
+	}
+
+	ctx = pool.Context()
+
+	if pool.queueSize > 0 {
+		pool.queueSem = semaphore.NewWeighted(pool.queueSize)
+	}
+
 	subpool := &subpool{
-		pool: &pool{
-			ctx:            ctx,
-			maxConcurrency: maxConcurrency,
-		},
+		pool:   pool,
 		parent: parent,
-		sem:    make(chan struct{}, maxConcurrency),
+		sem:    semaphore.NewWeighted(maxConcurrency),
 	}
 
 	subpool.pool.dispatcher = dispatcher.NewDispatcher(ctx, subpool.dispatch, tasksLen)
@@ -52,27 +65,36 @@ func newSubpool(maxConcurrency int, ctx context.Context, parent *pool) Pool {
 
 func (p *subpool) dispatch(incomingTasks []any) {
 
-	p.waitGroup.Add(len(incomingTasks))
+	ctx := p.Context()
 
 	// Submit tasks
 	for _, task := range incomingTasks {
 
-		select {
-		case <-p.Context().Done():
-			// Context canceled, exit
-			return
-		case p.sem <- struct{}{}:
-			// Acquired the semaphore, submit another task
+		// Acquire semaphore to limit concurrency
+		if p.nonBlocking {
+			if ok := p.sem.TryAcquire(1); !ok {
+				return
+			}
+		} else {
+			if err := p.sem.Acquire(ctx, 1); err != nil {
+				return
+			}
 		}
 
 		subpoolTask := subpoolTask[any]{
 			task:          task,
+			queueSem:      p.queueSem,
 			sem:           p.sem,
 			waitGroup:     &p.waitGroup,
 			updateMetrics: p.updateMetrics,
 		}
 
-		p.parent.Go(subpoolTask.Run)
+		p.waitGroup.Add(1)
+
+		if err := p.parent.Go(subpoolTask.Run); err != nil {
+			// We failed to submit the task, release semaphore
+			subpoolTask.Close()
+		}
 	}
 }
 
@@ -81,11 +103,13 @@ func (p *subpool) Stop() Task {
 		p.dispatcher.CloseAndWait()
 
 		p.waitGroup.Wait()
-
-		close(p.sem)
 	})
 }
 
 func (p *subpool) StopAndWait() {
 	p.Stop().Wait()
+}
+
+func (p *subpool) RunningWorkers() int64 {
+	return int64(p.sem.Acquired())
 }
