@@ -382,3 +382,35 @@ func TestTaskGroupMetricsWithCancelledContext(t *testing.T) {
 	assert.Equal(t, uint64(5), pool.SuccessfulTasks())
 	assert.Equal(t, uint64(5), pool.FailedTasks())
 }
+
+func TestTaskGroupWaitingTasks(t *testing.T) {
+	// Create a pool with limited concurrency
+	pool := NewPool(10)
+
+	// Create a task group
+	group := pool.NewGroup()
+
+	start := make(chan struct{})
+	end := make(chan struct{})
+
+	// Submit 20 tasks
+	for i := 0; i < 20; i++ {
+		group.Submit(func() {
+			<-start
+			<-end
+		})
+	}
+
+	// Start half of the tasks
+	for i := 0; i < 10; i++ {
+		start <- struct{}{}
+	}
+
+	assert.Equal(t, int64(10), pool.RunningWorkers())
+	assert.Equal(t, uint64(10), pool.WaitingTasks())
+
+	// Wait for all tasks to complete
+	close(start)
+	close(end)
+	group.Wait()
+}
