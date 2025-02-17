@@ -4,32 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"sync"
 )
 
 var ErrPanic = errors.New("task panicked")
-
-type subpoolTask[R any] struct {
-	task          any
-	sem           chan struct{}
-	waitGroup     *sync.WaitGroup
-	updateMetrics func(error)
-}
-
-func (t subpoolTask[R]) Run() {
-	defer func() {
-		// Release semaphore
-		<-t.sem
-		// Decrement wait group
-		t.waitGroup.Done()
-	}()
-
-	_, err := invokeTask[R](t.task)
-
-	if t.updateMetrics != nil {
-		t.updateMetrics(err)
-	}
-}
 
 type wrappedTask[R any, C func(error) | func(R, error)] struct {
 	task     any

@@ -156,7 +156,7 @@ func TestPoolMetrics(t *testing.T) {
 
 func TestPoolSubmitOnStoppedPool(t *testing.T) {
 
-	pool := newPool(100)
+	pool := newPool(100, nil)
 
 	pool.Submit(func() {})
 
@@ -210,4 +210,67 @@ func TestPoolStoppedAfterCancel(t *testing.T) {
 	err = pool.Go(func() {})
 
 	assert.Equal(t, ErrPoolStopped, err)
+}
+
+func TestPoolWithQueueSize(t *testing.T) {
+
+	pool := NewPool(1, WithQueueSize(10))
+
+	assert.Equal(t, 10, pool.QueueSize())
+	assert.Equal(t, false, pool.NonBlocking())
+
+	var taskCount int = 50
+
+	for i := 0; i < taskCount; i++ {
+		pool.Submit(func() {
+			time.Sleep(1 * time.Millisecond)
+		})
+	}
+
+	pool.Stop().Wait()
+
+	assert.Equal(t, uint64(taskCount), pool.SubmittedTasks())
+	assert.Equal(t, uint64(taskCount), pool.CompletedTasks())
+}
+
+func TestPoolWithQueueSizeAndNonBlocking(t *testing.T) {
+
+	pool := NewPool(10, WithQueueSize(10), WithNonBlocking(true))
+
+	assert.Equal(t, 10, pool.QueueSize())
+	assert.Equal(t, true, pool.NonBlocking())
+
+	taskStarted := make(chan struct{}, 10)
+	taskWait := make(chan struct{})
+
+	for i := 0; i < 10; i++ {
+		pool.Submit(func() {
+			taskStarted <- struct{}{}
+			<-taskWait
+		})
+	}
+
+	// Wait for 10 tasks to start
+	for i := 0; i < 10; i++ {
+		<-taskStarted
+	}
+
+	assert.Equal(t, int64(10), pool.RunningWorkers())
+	assert.Equal(t, uint64(10), pool.SubmittedTasks())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+
+	// Saturate the queue
+	for i := 0; i < 10; i++ {
+		pool.Submit(func() {
+			time.Sleep(10 * time.Millisecond)
+		})
+	}
+
+	// Submit a task that should be rejected
+	task := pool.Submit(func() {})
+	// Unblock tasks
+	close(taskWait)
+	assert.Equal(t, ErrQueueFull, task.Wait())
+
+	pool.Stop().Wait()
 }

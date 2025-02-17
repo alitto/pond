@@ -16,8 +16,8 @@ type ResultPool[R any] interface {
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
 	SubmitErr(task func() (R, error)) Result[R]
 
-	// Creates a new subpool with the specified maximum concurrency.
-	NewSubpool(maxConcurrency int) ResultPool[R]
+	// Creates a new subpool with the specified maximum concurrency and options.
+	NewSubpool(maxConcurrency int, options ...Option) ResultPool[R]
 
 	// Creates a new task group.
 	NewGroup() ResultTaskGroup[R]
@@ -51,17 +51,21 @@ func (p *resultPool[R]) submit(task any) Result[R] {
 
 	wrapped := wrapTask[R, func(R, error)](task, resolve)
 
-	p.dispatcher.Write(wrapped)
+	p.pool.submit(wrapped)
 
 	return future
 }
 
-func (p *resultPool[R]) NewSubpool(maxConcurrency int) ResultPool[R] {
-	return newResultSubpool[R](maxConcurrency, p.Context(), p.pool)
+func (p *resultPool[R]) NewSubpool(maxConcurrency int, options ...Option) ResultPool[R] {
+	return newResultPool[R](maxConcurrency, p.pool, options...)
+}
+
+func newResultPool[R any](maxConcurrency int, parent *pool, options ...Option) *resultPool[R] {
+	return &resultPool[R]{
+		pool: newPool(maxConcurrency, parent, options...),
+	}
 }
 
 func NewResultPool[R any](maxConcurrency int, options ...Option) ResultPool[R] {
-	return &resultPool[R]{
-		pool: newPool(maxConcurrency, options...),
-	}
+	return newResultPool[R](maxConcurrency, nil, options...)
 }

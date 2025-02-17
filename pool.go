@@ -3,26 +3,33 @@ package pond
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
-	"runtime"
 	"sync"
 	"sync/atomic"
 
-	"github.com/alitto/pond/v2/internal/dispatcher"
 	"github.com/alitto/pond/v2/internal/future"
+	"github.com/alitto/pond/v2/internal/linkedbuffer"
 )
 
-var NUM_CPU = runtime.NumCPU()
+const (
+	DefaultQueueSize        = 0
+	DefaultNonBlocking      = false
+	LinkedBufferInitialSize = 1024
+	LinkedBufferMaxCapacity = 100 * 1024
+)
 
-var MAX_TASKS_CHAN_LENGTH = NUM_CPU * 128
+var (
+	ErrQueueFull   = errors.New("queue is full")
+	ErrQueueEmpty  = errors.New("queue is empty")
+	ErrPoolStopped = errors.New("pool stopped")
 
-var ErrPoolStopped = errors.New("pool stopped")
-
-var poolStoppedFuture = func() Task {
-	future, resolve := future.NewFuture(context.Background())
-	resolve(ErrPoolStopped)
-	return future
-}()
+	poolStoppedFuture = func() Task {
+		future, resolve := future.NewFuture(context.Background())
+		resolve(ErrPoolStopped)
+		return future
+	}()
+)
 
 // basePool is the base interface for all pool types.
 type basePool interface {
@@ -46,6 +53,14 @@ type basePool interface {
 
 	// Returns the maximum concurrency of the pool.
 	MaxConcurrency() int
+
+	// Returns the size of the task queue.
+	QueueSize() int
+
+	// Returns true if the pool is non-blocking, meaning that it will not block when the task queue is full.
+	// In a non-blocking pool, tasks that cannot be submitted to the queue will be dropped.
+	// By default, pools are blocking, meaning that they will block when the task queue is full.
+	NonBlocking() bool
 
 	// Returns the context associated with this pool.
 	Context() context.Context
@@ -73,8 +88,8 @@ type Pool interface {
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
 	SubmitErr(task func() error) Task
 
-	// Creates a new subpool with the specified maximum concurrency.
-	NewSubpool(maxConcurrency int) Pool
+	// Creates a new subpool with the specified maximum concurrency and options.
+	NewSubpool(maxConcurrency int, options ...Option) Pool
 
 	// Creates a new task group.
 	NewGroup() TaskGroup
@@ -83,17 +98,20 @@ type Pool interface {
 	NewGroupContext(ctx context.Context) TaskGroup
 }
 
-// pool is an implementation of the Pool interface.
 type pool struct {
+	mutex               sync.Mutex
+	parent              *pool
 	ctx                 context.Context
 	cancel              context.CancelCauseFunc
+	nonBlocking         bool
 	maxConcurrency      int
-	tasks               chan any
-	tasksLen            int
+	closed              atomic.Bool
 	workerCount         atomic.Int64
 	workerWaitGroup     sync.WaitGroup
-	dispatcher          *dispatcher.Dispatcher[any]
-	dispatcherRunning   sync.Mutex
+	submitWaiters       chan struct{}
+	queueSize           int
+	tasks               *linkedbuffer.LinkedBuffer[any]
+	submittedTaskCount  atomic.Uint64
 	successfulTaskCount atomic.Uint64
 	failedTaskCount     atomic.Uint64
 }
@@ -103,11 +121,19 @@ func (p *pool) Context() context.Context {
 }
 
 func (p *pool) Stopped() bool {
-	return p.ctx.Err() != nil
+	return p.closed.Load() || p.ctx.Err() != nil
 }
 
 func (p *pool) MaxConcurrency() int {
 	return p.maxConcurrency
+}
+
+func (p *pool) QueueSize() int {
+	return p.queueSize
+}
+
+func (p *pool) NonBlocking() bool {
+	return p.nonBlocking
 }
 
 func (p *pool) RunningWorkers() int64 {
@@ -115,11 +141,11 @@ func (p *pool) RunningWorkers() int64 {
 }
 
 func (p *pool) SubmittedTasks() uint64 {
-	return p.dispatcher.WriteCount()
+	return p.submittedTaskCount.Load()
 }
 
 func (p *pool) WaitingTasks() uint64 {
-	return p.dispatcher.Len()
+	return p.tasks.Len()
 }
 
 func (p *pool) FailedTasks() uint64 {
@@ -134,6 +160,203 @@ func (p *pool) CompletedTasks() uint64 {
 	return p.successfulTaskCount.Load() + p.failedTaskCount.Load()
 }
 
+func (p *pool) worker(task any) {
+	defer p.workerWaitGroup.Done()
+
+	var readTaskErr, err error
+	for {
+		_, err = invokeTask[any](task)
+
+		p.updateMetrics(err)
+
+		task, readTaskErr = p.readTask()
+
+		if readTaskErr != nil {
+			return
+		}
+	}
+}
+
+func (p *pool) Go(task func()) error {
+	return p.submit(task)
+}
+
+func (p *pool) Submit(task func()) Task {
+	return p.wrapAndSubmit(task)
+}
+
+func (p *pool) SubmitErr(task func() error) Task {
+	return p.wrapAndSubmit(task)
+}
+
+func (p *pool) wrapAndSubmit(task any) Task {
+	if p.Stopped() {
+		return poolStoppedFuture
+	}
+
+	ctx := p.Context()
+	future, resolve := future.NewFuture(ctx)
+
+	wrapped := wrapTask[struct{}, func(error)](task, resolve)
+
+	if err := p.submit(wrapped); err != nil {
+		resolve(err)
+		return future
+	}
+
+	return future
+}
+
+func (p *pool) submit(task any) error {
+	if p.nonBlocking {
+		return p.trySubmit(task)
+	}
+
+	return p.blockingSubmit(task)
+}
+
+func (p *pool) blockingSubmit(task any) error {
+	for {
+		if err := p.trySubmit(task); err != ErrQueueFull {
+			return err
+		}
+
+		// No space left in the queue, wait until a slot is released
+		select {
+		case <-p.ctx.Done():
+			return p.ctx.Err()
+		case <-p.submitWaiters:
+			select {
+			case <-p.ctx.Done():
+				return p.ctx.Err()
+			default:
+			}
+		}
+	}
+}
+
+func (p *pool) trySubmit(task any) error {
+	// Check if the pool has been stopped
+	if p.Stopped() {
+		return ErrPoolStopped
+	}
+
+	done := p.ctx.Done()
+
+	var poppedTask any
+	var tasksLen int
+
+	p.mutex.Lock()
+
+	// Context was cancelled while waiting for the lock
+	select {
+	case <-done:
+		p.mutex.Unlock()
+		return p.ctx.Err()
+	default:
+	}
+
+	tasksLen = int(p.tasks.Len())
+
+	if p.queueSize > 0 && tasksLen >= p.queueSize {
+		p.mutex.Unlock()
+		return ErrQueueFull
+	}
+
+	if int(p.workerCount.Load()) < p.maxConcurrency {
+		p.workerCount.Add(1)
+
+		if tasksLen == 0 {
+			// No idle workers and queue is empty, we can pop the task immediately
+			poppedTask = task
+		} else {
+			// Push the task at the back of the queue
+			p.tasks.Write(task)
+
+			// Pop the front task
+			poppedTask, _ = p.tasks.Read()
+		}
+	} else {
+		// Push the task at the back of the queue
+		p.tasks.Write(task)
+	}
+
+	p.mutex.Unlock()
+
+	if poppedTask != nil {
+		if p.parent == nil {
+			p.workerWaitGroup.Add(1)
+			// Launch a new worker
+			go p.worker(poppedTask)
+		} else {
+			// Submit task to the parent pool
+			p.subpoolSubmit(poppedTask)
+		}
+	}
+
+	p.submittedTaskCount.Add(1)
+
+	return nil
+}
+
+func (p *pool) subpoolSubmit(task any) error {
+	p.workerWaitGroup.Add(1)
+	return p.parent.submit(func() (output any, err error) {
+		defer p.workerWaitGroup.Done()
+
+		output, err = invokeTask[any](task)
+
+		p.updateMetrics(err)
+
+		// Attempt to submit the next task to the parent pool
+		if task, err := p.readTask(); err == nil {
+			p.subpoolSubmit(task)
+		}
+
+		return
+	})
+}
+
+func (p *pool) readTask() (task any, err error) {
+	p.mutex.Lock()
+
+	// Check if the pool context has been cancelled
+	select {
+	case <-p.ctx.Done():
+		err = p.ctx.Err()
+		p.mutex.Unlock()
+		return
+	default:
+	}
+
+	if p.tasks.Len() == 0 {
+		// No more tasks in the queue, worker will exit
+		p.workerCount.Add(-1)
+		p.mutex.Unlock()
+
+		err = ErrQueueEmpty
+		return
+	}
+
+	task, _ = p.tasks.Read()
+
+	p.mutex.Unlock()
+
+	// Notify push waiters that there is space in the queue to push more elements
+	p.notifyPushWaiter()
+
+	return
+}
+
+func (p *pool) notifyPushWaiter() {
+	// Wake up one of the waiters (if any)
+	select {
+	case p.submitWaiters <- struct{}{}:
+	default:
+		return
+	}
+}
+
 func (p *pool) updateMetrics(err error) {
 	if err != nil {
 		p.failedTaskCount.Add(1)
@@ -142,42 +365,15 @@ func (p *pool) updateMetrics(err error) {
 	}
 }
 
-func (p *pool) Go(task func()) error {
-	if err := p.dispatcher.Write(task); err != nil {
-		return ErrPoolStopped
-	}
-
-	return nil
-}
-
-func (p *pool) Submit(task func()) Task {
-	return p.submit(task)
-}
-
-func (p *pool) SubmitErr(task func() error) Task {
-	return p.submit(task)
-}
-
-func (p *pool) submit(task any) Task {
-	future, resolve := future.NewFuture(p.Context())
-
-	wrapped := wrapTask[struct{}, func(error)](task, resolve)
-
-	if err := p.dispatcher.Write(wrapped); err != nil {
-		return poolStoppedFuture
-	}
-
-	return future
-}
-
 func (p *pool) Stop() Task {
 	return Submit(func() {
-		p.dispatcher.CloseAndWait()
+		// Stop accepting new tasks
+		p.closed.Store(true)
 
-		close(p.tasks)
-
+		// Wait for all workers to finish executing all tasks (including the ones in the queue)
 		p.workerWaitGroup.Wait()
 
+		// Cancel the context with a pool stopped error to signal that the pool has been stopped
 		p.cancel(ErrPoolStopped)
 	})
 }
@@ -186,8 +382,8 @@ func (p *pool) StopAndWait() {
 	p.Stop().Wait()
 }
 
-func (p *pool) NewSubpool(maxConcurrency int) Pool {
-	return newSubpool(maxConcurrency, p.ctx, p)
+func (p *pool) NewSubpool(maxConcurrency int, options ...Option) Pool {
+	return newPool(maxConcurrency, p, options...)
 }
 
 func (p *pool) NewGroup() TaskGroup {
@@ -198,124 +394,17 @@ func (p *pool) NewGroupContext(ctx context.Context) TaskGroup {
 	return newTaskGroup(p, ctx)
 }
 
-func (p *pool) dispatch(incomingTasks []any) {
-	p.dispatcherRunning.Lock()
-	defer p.dispatcherRunning.Unlock()
+func newPool(maxConcurrency int, parent *pool, options ...Option) *pool {
 
-	// Submit tasks
-	for _, task := range incomingTasks {
-		p.dispatchTask(task)
-	}
-}
-
-func (p *pool) dispatchTask(task any) {
-	// Attempt to submit task without blocking
-	select {
-	case p.tasks <- task:
-		// Task submitted
-
-		// If we could submit the task without blocking, it means that either:
-		// 1. There are no idle workers (all spawned workers are processing a task)
-		// 2. There are no workers in the pool
-		// In either case, we should launch a new worker as long as the number of workers is less than the size of the task queue.
-		p.startWorker(p.tasksLen)
-		return
-	default:
-	}
-
-	// Task queue is full, launch a new worker if the number of workers is less than the maximum concurrency
-	p.startWorker(p.maxConcurrency)
-
-	// Block until task is submitted
-	select {
-	case p.tasks <- task:
-		// Task submitted
-	case <-p.ctx.Done():
-		// Context cancelled, exit
-		return
-	}
-}
-
-func (p *pool) startWorker(limit int) {
-	if p.workerCount.Load() >= int64(limit) {
-		return
-	}
-	p.workerWaitGroup.Add(1)
-	p.workerCount.Add(1)
-	go p.worker()
-}
-
-func (p *pool) workerCanExit() bool {
-	if int(p.workerCount.Load()) > NUM_CPU {
-		// If there are more workers than CPUs, then we can trust workerCount to be at least 1
-		p.workerCount.Add(-1)
-		return true
-	}
-
-	// Check if the dispatcher is running
-	if !p.dispatcherRunning.TryLock() {
-		// Dispatcher is running, cannot exit yet
-		runtime.Gosched()
-		return false
-	}
-
-	if len(p.tasks) > 0 {
-		// There are tasks in the queue, cannot exit yet
-		p.dispatcherRunning.Unlock()
-		return false
-	}
-	p.workerCount.Add(-1)
-	p.dispatcherRunning.Unlock()
-
-	return true
-}
-
-func (p *pool) worker() {
-	defer func() {
-		p.workerWaitGroup.Done()
-	}()
-
-	for {
-		// Prioritize context cancellation over task execution
-		select {
-		case <-p.ctx.Done():
-			// Context cancelled, exit
-			p.workerCount.Add(-1)
-			return
-		default:
+	if parent != nil {
+		if maxConcurrency > parent.MaxConcurrency() {
+			panic(fmt.Errorf("maxConcurrency cannot be greater than the parent pool's maxConcurrency (%d)", parent.MaxConcurrency()))
 		}
 
-		select {
-		case <-p.ctx.Done():
-			// Context cancelled, exit
-			p.workerCount.Add(-1)
-			return
-		case task, ok := <-p.tasks:
-			if !ok || task == nil {
-				// Channel closed or worker killed, exit
-				p.workerCount.Add(-1)
-				return
-			}
-
-			// Execute task
-			_, err := invokeTask[any](task)
-
-			// Update metrics
-			p.updateMetrics(err)
-
-		default:
-			// No tasks left
-
-			// Check if the worker can exit
-			if p.workerCanExit() {
-				return
-			}
-			continue
+		if maxConcurrency == 0 {
+			maxConcurrency = parent.MaxConcurrency()
 		}
 	}
-}
-
-func newPool(maxConcurrency int, options ...Option) *pool {
 
 	if maxConcurrency == 0 {
 		maxConcurrency = math.MaxInt
@@ -325,16 +414,19 @@ func newPool(maxConcurrency int, options ...Option) *pool {
 		panic(errors.New("maxConcurrency must be greater than 0"))
 	}
 
-	tasksLen := maxConcurrency
-	if tasksLen > MAX_TASKS_CHAN_LENGTH {
-		tasksLen = MAX_TASKS_CHAN_LENGTH
-	}
-
 	pool := &pool{
 		ctx:            context.Background(),
+		nonBlocking:    DefaultNonBlocking,
 		maxConcurrency: maxConcurrency,
-		tasks:          make(chan any, tasksLen),
-		tasksLen:       tasksLen,
+		queueSize:      DefaultQueueSize,
+		submitWaiters:  make(chan struct{}),
+	}
+
+	if parent != nil {
+		pool.parent = parent
+		pool.ctx = parent.Context()
+		pool.queueSize = parent.queueSize
+		pool.nonBlocking = parent.nonBlocking
 	}
 
 	for _, option := range options {
@@ -343,12 +435,11 @@ func newPool(maxConcurrency int, options ...Option) *pool {
 
 	pool.ctx, pool.cancel = context.WithCancelCause(pool.ctx)
 
-	pool.dispatcher = dispatcher.NewDispatcher(pool.ctx, pool.dispatch, tasksLen)
+	pool.tasks = linkedbuffer.NewLinkedBuffer[any](LinkedBufferInitialSize, LinkedBufferMaxCapacity)
 
 	return pool
 }
 
-// NewPool creates a new pool with the specified maximum concurrency and options.
 func NewPool(maxConcurrency int, options ...Option) Pool {
-	return newPool(maxConcurrency, options...)
+	return newPool(maxConcurrency, nil, options...)
 }

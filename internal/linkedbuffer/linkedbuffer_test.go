@@ -1,70 +1,49 @@
 package linkedbuffer
 
 import (
-	"sync"
-	"sync/atomic"
+	"math"
 	"testing"
 
 	"github.com/alitto/pond/v2/internal/assert"
 )
 
 func TestLinkedBuffer(t *testing.T) {
-	buf := NewLinkedBuffer[int](10, 1024)
+	buf := NewLinkedBuffer[int](2, 2)
 
 	assert.Equal(t, uint64(0), buf.Len())
 	assert.Equal(t, uint64(0), buf.WriteCount())
 	assert.Equal(t, uint64(0), buf.ReadCount())
 
-	writeCount := 1000
-	writers := 100
-	readers := 100
-	var readCount atomic.Uint64
+	buf.Write(1)
+	buf.Write(2)
 
-	writersWg := sync.WaitGroup{}
-	readersWg := sync.WaitGroup{}
-	writersWg.Add(writers)
-	readersWg.Add(readers)
+	assert.Equal(t, uint64(2), buf.Len())
+	assert.Equal(t, uint64(2), buf.WriteCount())
+	assert.Equal(t, uint64(0), buf.ReadCount())
 
-	// Launch writers
-	for i := 0; i < writers; i++ {
-		workerNum := i
-		go func() {
-			defer writersWg.Done()
+	value, err := buf.Read()
 
-			for n := 0; n < writeCount; n++ {
-				buf.Write([]int{workerNum * n})
-			}
-		}()
-	}
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 1, value)
+	assert.Equal(t, uint64(1), buf.ReadCount())
 
-	writersWg.Wait()
+	value, err = buf.Read()
 
-	assert.Equal(t, uint64(writers*writeCount), buf.Len())
+	assert.Equal(t, 2, value)
+	assert.Equal(t, uint64(2), buf.ReadCount())
 
-	for i := 0; i < readers; i++ {
-		go func() {
-			defer readersWg.Done()
+	// Test EOF
+	value, err = buf.Read()
 
-			batch := make([]int, 2000)
+	assert.Equal(t, 0, value)
+	assert.Equal(t, ErrEOF, err)
+	assert.Equal(t, uint64(2), buf.ReadCount())
 
-			for {
-				batchSize := buf.Read(batch)
+	buf.Write(3)
 
-				if batchSize == 0 {
-					break
-				}
-
-				readCount.Add(uint64(batchSize))
-
-				// Reset buffer
-				batch = batch[:0]
-			}
-		}()
-	}
-
-	readersWg.Wait()
-
-	assert.Equal(t, uint64(writers*writeCount), readCount.Load())
+	assert.Equal(t, uint64(1), buf.Len())
+	assert.Equal(t, uint64(3), buf.WriteCount())
+	assert.Equal(t, uint64(2), buf.ReadCount())
 }
 
 func TestLinkedBufferLen(t *testing.T) {
@@ -72,61 +51,46 @@ func TestLinkedBufferLen(t *testing.T) {
 
 	assert.Equal(t, uint64(0), buf.Len())
 
-	buf.Write([]int{1, 2, 3, 4, 5})
+	buf.Write(1)
+	buf.Write(2)
 
-	assert.Equal(t, uint64(5), buf.Len())
+	assert.Equal(t, uint64(2), buf.Len())
 
-	buf.Write([]int{6, 7, 8, 9, 10})
+	buf.Write(3)
 
-	assert.Equal(t, uint64(10), buf.Len())
+	assert.Equal(t, uint64(3), buf.Len())
 
-	buf.Read(make([]int, 5))
-
-	assert.Equal(t, uint64(5), buf.Len())
-
-	buf.Read(make([]int, 5))
-
-	assert.Equal(t, uint64(0), buf.Len())
-
-	buf.readCount.Add(1)
-	assert.Equal(t, uint64(0), buf.Len())
+	// Test wrap around
+	buf.writeCount.Store(0)
+	buf.writeCount.Add(math.MaxUint64)
+	buf.readCount.Add(math.MaxUint64 - 3)
+	assert.Equal(t, uint64(3), buf.Len())
 }
 
 func TestLinkedBufferWithReusedBuffer(t *testing.T) {
 
 	buf := NewLinkedBuffer[int](2, 1)
 
-	values := make([]int, 1)
+	buf.Write(1)
+	buf.Write(2)
 
-	buf.Write([]int{1})
-	buf.Write([]int{2})
+	value, err := buf.Read()
 
-	n := buf.Read(values)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 1, value)
 
-	assert.Equal(t, 1, n)
-	assert.Equal(t, 1, values[0])
+	value, err = buf.Read()
 
-	assert.Equal(t, 1, len(values))
-	assert.Equal(t, 1, cap(values))
+	assert.Equal(t, 2, value)
 
-	n = buf.Read(values)
+	buf.Write(3)
+	buf.Write(4)
 
-	assert.Equal(t, 1, n)
-	assert.Equal(t, 1, len(values))
-	assert.Equal(t, 2, values[0])
+	value, err = buf.Read()
 
-	buf.Write([]int{3})
-	buf.Write([]int{4})
+	assert.Equal(t, 3, value)
 
-	n = buf.Read(values)
+	value, err = buf.Read()
 
-	assert.Equal(t, 1, n)
-	assert.Equal(t, 1, len(values))
-	assert.Equal(t, 3, values[0])
-
-	n = buf.Read(values)
-
-	assert.Equal(t, 1, n)
-	assert.Equal(t, 1, len(values))
-	assert.Equal(t, 4, values[0])
+	assert.Equal(t, 4, value)
 }
