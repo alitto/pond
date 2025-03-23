@@ -20,9 +20,10 @@ const (
 )
 
 var (
-	ErrQueueFull   = errors.New("queue is full")
-	ErrQueueEmpty  = errors.New("queue is empty")
-	ErrPoolStopped = errors.New("pool stopped")
+	ErrQueueFull             = errors.New("queue is full")
+	ErrQueueEmpty            = errors.New("queue is empty")
+	ErrPoolStopped           = errors.New("pool stopped")
+	ErrMaxConcurrencyReached = errors.New("max concurrency reached")
 
 	poolStoppedFuture = func() Task {
 		future, resolve := future.NewFuture(context.Background())
@@ -73,6 +74,11 @@ type basePool interface {
 
 	// Returns true if the pool has been stopped or its context has been cancelled.
 	Stopped() bool
+
+	// Resizes the pool by changing the maximum concurrency (number of workers) of the pool.
+	// The new max concurrency must be greater than 0.
+	// If the new max concurrency is less than the current number of running workers, the pool will continue to run with the new max concurrency.
+	Resize(maxConcurrency int)
 }
 
 // Represents a pool of goroutines that can execute tasks concurrently.
@@ -125,7 +131,41 @@ func (p *pool) Stopped() bool {
 }
 
 func (p *pool) MaxConcurrency() int {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
 	return p.maxConcurrency
+}
+
+func (p *pool) Resize(maxConcurrency int) {
+	if maxConcurrency <= 0 {
+		panic(errors.New("maxConcurrency must be greater than 0"))
+	}
+
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	delta := maxConcurrency - p.maxConcurrency
+
+	p.maxConcurrency = maxConcurrency
+
+	if delta > 0 {
+		// Increase the number of workers by delta if there are tasks in the queue
+		queuedTasks := int(p.tasks.Len())
+
+		for i := 0; i < delta && i < queuedTasks; i++ {
+			p.workerCount.Add(1)
+
+			if p.parent == nil {
+				// Launch a new worker
+				p.workerWaitGroup.Add(1)
+				go p.worker(nil)
+			} else {
+				// Submit a task to the parent pool
+				p.subpoolSubmit(nil)
+			}
+		}
+	}
 }
 
 func (p *pool) QueueSize() int {
@@ -165,9 +205,11 @@ func (p *pool) worker(task any) {
 
 	var readTaskErr, err error
 	for {
-		_, err = invokeTask[any](task)
+		if task != nil {
+			_, err = invokeTask[any](task)
 
-		p.updateMetrics(err)
+			p.updateMetrics(err)
+		}
 
 		task, readTaskErr = p.readTask()
 
@@ -304,9 +346,11 @@ func (p *pool) subpoolSubmit(task any) error {
 	return p.parent.submit(func() (output any, err error) {
 		defer p.workerWaitGroup.Done()
 
-		output, err = invokeTask[any](task)
+		if task != nil {
+			output, err = invokeTask[any](task)
 
-		p.updateMetrics(err)
+			p.updateMetrics(err)
+		}
 
 		// Attempt to submit the next task to the parent pool
 		if task, err := p.readTask(); err == nil {
@@ -335,6 +379,15 @@ func (p *pool) readTask() (task any, err error) {
 		p.mutex.Unlock()
 
 		err = ErrQueueEmpty
+		return
+	}
+
+	if p.maxConcurrency > 0 && int(p.workerCount.Load()) > p.maxConcurrency {
+		// Max concurrency reached, kill the worker
+		p.workerCount.Add(-1)
+		p.mutex.Unlock()
+
+		err = ErrMaxConcurrencyReached
 		return
 	}
 

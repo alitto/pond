@@ -334,3 +334,76 @@ func TestSubpoolWithQueueSizeOverride(t *testing.T) {
 	subpool.StopAndWait()
 	pool.StopAndWait()
 }
+
+func TestSubpoolResize(t *testing.T) {
+
+	parentPool := NewPool(10, WithQueueSize(10))
+
+	pool := parentPool.NewSubpool(1)
+
+	assert.Equal(t, 1, pool.MaxConcurrency())
+	assert.Equal(t, 10, parentPool.MaxConcurrency())
+
+	taskStarted := make(chan struct{}, 10)
+	taskWait := make(chan struct{}, 10)
+
+	// Submit 10 tasks
+	for i := 0; i < 10; i++ {
+		pool.Submit(func() {
+			<-taskStarted
+			<-taskWait
+		})
+	}
+
+	// Unblock 3 tasks
+	for i := 0; i < 3; i++ {
+		taskStarted <- struct{}{}
+	}
+
+	// Verify only 1 task is running and 9 are waiting
+	time.Sleep(10 * time.Millisecond)
+	assert.Equal(t, uint64(9), pool.WaitingTasks())
+	assert.Equal(t, int64(1), pool.RunningWorkers())
+	assert.Equal(t, int64(1), parentPool.RunningWorkers())
+
+	// Increase max concurrency to 3
+	pool.Resize(3)
+	assert.Equal(t, 3, pool.MaxConcurrency())
+	assert.Equal(t, 10, parentPool.MaxConcurrency())
+
+	// Unblock 3 more tasks
+	for i := 0; i < 3; i++ {
+		taskStarted <- struct{}{}
+	}
+
+	// Verify 3 tasks are running and 7 are waiting
+	time.Sleep(10 * time.Millisecond)
+	assert.Equal(t, uint64(7), pool.WaitingTasks())
+	assert.Equal(t, int64(3), pool.RunningWorkers())
+	assert.Equal(t, int64(3), parentPool.RunningWorkers())
+
+	// Decrease max concurrency to 1
+	pool.Resize(2)
+	assert.Equal(t, 2, pool.MaxConcurrency())
+	assert.Equal(t, 10, parentPool.MaxConcurrency())
+
+	// Complete the 3 running tasks
+	for i := 0; i < 3; i++ {
+		taskWait <- struct{}{}
+	}
+
+	// Unblock all remaining tasks
+	for i := 0; i < 4; i++ {
+		taskStarted <- struct{}{}
+	}
+
+	// Ensure 2 tasks are running and 5 are waiting
+	time.Sleep(10 * time.Millisecond)
+	assert.Equal(t, uint64(5), pool.WaitingTasks())
+	assert.Equal(t, int64(2), pool.RunningWorkers())
+	assert.Equal(t, int64(2), parentPool.RunningWorkers())
+
+	close(taskWait)
+
+	pool.Stop().Wait()
+}

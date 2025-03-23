@@ -42,6 +42,7 @@ Some common use cases include:
   - Panics recovery (panics are captured and returned as errors)
   - Subpools with a fraction of the parent pool's maximum number of workers
   - Blocking and non-blocking submission of tasks when the queue is full
+  - Dynamic resizing of the pool
 - [API reference](https://pkg.go.dev/github.com/alitto/pond/v2)
 
 ## Installation
@@ -405,6 +406,40 @@ When a pool defines a queue size (bounded), you can also specify how to handle t
 // Create a pool with a maximum of 10 tasks in the queue and non-blocking task submission
 pool := pond.NewPool(1, pond.WithQueueSize(10), pond.WithNonBlocking(true))
 ```
+
+### Resizing pools (v2)
+
+You can dynamically change the maximum number of workers in a pool using the `Resize` method. This is useful when you need to adjust the pool's capacity based on runtime conditions.
+
+``` go
+// Create a pool with 5 workers
+pool := pond.NewPool(5)
+
+// Submit some tasks
+for i := 0; i < 20; i++ {
+    pool.Submit(func() {
+        // Do some work
+    })
+}
+
+// Increase the pool size to 10 workers
+pool.Resize(10)
+
+// Submit more tasks that will use the increased capacity
+for i := 0; i < 20; i++ {
+    pool.Submit(func() {
+        // Do some work
+    })
+}
+
+// Decrease the pool size back to 5 workers
+pool.Resize(5)
+```
+
+When resizing a pool:
+- The new maximum concurrency must be greater than 0
+- If you increase the size, new workers will be created as needed up to the new maximum
+- If you decrease the size, existing workers will continue running until they complete their current tasks, but no new workers will be created until the number of running workers is below the new maximum
 
 ### Metrics & monitoring
 
