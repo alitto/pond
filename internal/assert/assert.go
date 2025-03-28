@@ -23,6 +23,16 @@ func True(t *testing.T, actual bool) {
 }
 
 /**
+ * Asserts that the actual value is false.
+ */
+func False(t *testing.T, actual bool) {
+	if actual {
+		t.Helper()
+		t.Errorf("Expected false but was %T(%v)", actual, actual)
+	}
+}
+
+/**
  * Asserts that the function panics with the expected object.
  */
 func PanicsWith(t *testing.T, expected any, f func()) {

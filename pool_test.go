@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -338,4 +339,30 @@ func TestPoolResize(t *testing.T) {
 	close(taskWait)
 
 	pool.Stop().Wait()
+}
+
+func TestSubmitCLose(t *testing.T) {
+	pool := NewPool(10)
+
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			pool.Submit(func() {
+				time.Sleep(100 * time.Millisecond)
+			})
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		pool.StopAndWait()
+	}()
+
+	wg.Wait()
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/alitto/pond/v2/internal/stopper"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -111,9 +112,8 @@ type pool struct {
 	cancel              context.CancelCauseFunc
 	nonBlocking         bool
 	maxConcurrency      int
-	closed              atomic.Bool
 	workerCount         atomic.Int64
-	workerWaitGroup     sync.WaitGroup
+	workerStopper       *stopper.Stopper
 	submitWaiters       chan struct{}
 	queueSize           int
 	tasks               *linkedbuffer.LinkedBuffer[any]
@@ -127,7 +127,7 @@ func (p *pool) Context() context.Context {
 }
 
 func (p *pool) Stopped() bool {
-	return p.closed.Load() || p.ctx.Err() != nil
+	return p.workerStopper.Stopping() || p.ctx.Err() != nil
 }
 
 func (p *pool) MaxConcurrency() int {
@@ -158,7 +158,7 @@ func (p *pool) Resize(maxConcurrency int) {
 
 			if p.parent == nil {
 				// Launch a new worker
-				p.workerWaitGroup.Add(1)
+				p.workerStopper.Add(1)
 				go p.worker(nil)
 			} else {
 				// Submit a task to the parent pool
@@ -201,7 +201,7 @@ func (p *pool) CompletedTasks() uint64 {
 }
 
 func (p *pool) worker(task any) {
-	defer p.workerWaitGroup.Done()
+	defer p.workerStopper.Done()
 
 	var readTaskErr, err error
 	for {
@@ -327,7 +327,7 @@ func (p *pool) trySubmit(task any) error {
 
 	if poppedTask != nil {
 		if p.parent == nil {
-			p.workerWaitGroup.Add(1)
+			p.workerStopper.Add(1)
 			// Launch a new worker
 			go p.worker(poppedTask)
 		} else {
@@ -342,9 +342,9 @@ func (p *pool) trySubmit(task any) error {
 }
 
 func (p *pool) subpoolSubmit(task any) error {
-	p.workerWaitGroup.Add(1)
+	p.workerStopper.Add(1)
 	return p.parent.submit(func() (output any, err error) {
-		defer p.workerWaitGroup.Done()
+		defer p.workerStopper.Done()
 
 		if task != nil {
 			output, err = invokeTask[any](task)
@@ -421,10 +421,10 @@ func (p *pool) updateMetrics(err error) {
 func (p *pool) Stop() Task {
 	return Submit(func() {
 		// Stop accepting new tasks
-		p.closed.Store(true)
+		p.workerStopper.Stop()
 
 		// Wait for all workers to finish executing all tasks (including the ones in the queue)
-		p.workerWaitGroup.Wait()
+		p.workerStopper.Wait()
 
 		// Cancel the context with a pool stopped error to signal that the pool has been stopped
 		p.cancel(ErrPoolStopped)
@@ -473,6 +473,7 @@ func newPool(maxConcurrency int, parent *pool, options ...Option) *pool {
 		maxConcurrency: maxConcurrency,
 		queueSize:      DefaultQueueSize,
 		submitWaiters:  make(chan struct{}),
+		workerStopper:  stopper.New(),
 	}
 
 	if parent != nil {
