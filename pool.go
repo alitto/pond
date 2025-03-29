@@ -67,6 +67,7 @@ type basePool interface {
 	Context() context.Context
 
 	// Stops the pool and returns a future that can be used to wait for all tasks pending to complete.
+	// The pool will not accept new tasks after it has been stopped.
 	Stop() Task
 
 	// Stops the pool and waits for all tasks to complete.
@@ -86,12 +87,19 @@ type Pool interface {
 	basePool
 
 	// Submits a task to the pool without waiting for it to complete.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, this method will return ErrPoolStopped.
 	Go(task func()) error
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, the returned future will resolve to ErrPoolStopped.
 	Submit(task func()) Task
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
+	// The task function must return an error.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, the returned future will resolve to ErrPoolStopped.
 	SubmitErr(task func() error) Task
 
 	// Creates a new subpool with the specified maximum concurrency and options.
@@ -155,10 +163,10 @@ func (p *pool) Resize(maxConcurrency int) {
 
 		for i := 0; i < delta && i < queuedTasks; i++ {
 			p.workerCount.Add(1)
+			p.workerWaitGroup.Add(1)
 
 			if p.parent == nil {
 				// Launch a new worker
-				p.workerWaitGroup.Add(1)
 				go p.worker(nil)
 			} else {
 				// Submit a task to the parent pool
@@ -201,8 +209,6 @@ func (p *pool) CompletedTasks() uint64 {
 }
 
 func (p *pool) worker(task any) {
-	defer p.workerWaitGroup.Done()
-
 	var readTaskErr, err error
 	for {
 		if task != nil {
@@ -278,74 +284,59 @@ func (p *pool) blockingSubmit(task any) error {
 }
 
 func (p *pool) trySubmit(task any) error {
-	// Check if the pool has been stopped
+	p.mutex.Lock()
+
+	// Check if the pool has been stopped while holding the lock
+	// to avoid race conditions on the workers wait group if the pool is being stopped.
 	if p.Stopped() {
+		p.mutex.Unlock()
 		return ErrPoolStopped
 	}
 
-	done := p.ctx.Done()
-
-	var poppedTask any
-	var tasksLen int
-
-	p.mutex.Lock()
-
-	// Context was cancelled while waiting for the lock
-	select {
-	case <-done:
-		p.mutex.Unlock()
-		return p.ctx.Err()
-	default:
-	}
-
-	tasksLen = int(p.tasks.Len())
+	tasksLen := int(p.tasks.Len())
 
 	if p.queueSize > 0 && tasksLen >= p.queueSize {
 		p.mutex.Unlock()
 		return ErrQueueFull
 	}
 
-	if int(p.workerCount.Load()) < p.maxConcurrency {
-		p.workerCount.Add(1)
+	p.submittedTaskCount.Add(1)
 
-		if tasksLen == 0 {
-			// No idle workers and queue is empty, we can pop the task immediately
-			poppedTask = task
-		} else {
-			// Push the task at the back of the queue
-			p.tasks.Write(task)
-
-			// Pop the front task
-			poppedTask, _ = p.tasks.Read()
-		}
-	} else {
+	if int(p.workerCount.Load()) >= p.maxConcurrency {
 		// Push the task at the back of the queue
 		p.tasks.Write(task)
+
+		p.mutex.Unlock()
+
+		return nil
+	}
+
+	p.workerCount.Add(1)
+	p.workerWaitGroup.Add(1)
+
+	if tasksLen > 0 {
+		// Push the task at the back of the queue
+		p.tasks.Write(task)
+
+		// Pop the front task
+		task, _ = p.tasks.Read()
 	}
 
 	p.mutex.Unlock()
 
-	if poppedTask != nil {
-		if p.parent == nil {
-			p.workerWaitGroup.Add(1)
-			// Launch a new worker
-			go p.worker(poppedTask)
-		} else {
-			// Submit task to the parent pool
-			p.subpoolSubmit(poppedTask)
-		}
+	if p.parent == nil {
+		// Launch a new worker
+		go p.worker(task)
+	} else {
+		// Submit task to the parent pool
+		p.subpoolSubmit(task)
 	}
-
-	p.submittedTaskCount.Add(1)
 
 	return nil
 }
 
 func (p *pool) subpoolSubmit(task any) error {
-	p.workerWaitGroup.Add(1)
 	return p.parent.submit(func() (output any, err error) {
-		defer p.workerWaitGroup.Done()
-
 		if task != nil {
 			output, err = invokeTask[any](task)
 
@@ -367,8 +358,12 @@ func (p *pool) readTask() (task any, err error) {
 	// Check if the pool context has been cancelled
 	select {
 	case <-p.ctx.Done():
-		err = p.ctx.Err()
+		// Context cancelled, worker will exit
+		p.workerCount.Add(-1)
+		p.workerWaitGroup.Done()
 		p.mutex.Unlock()
+
+		err = p.ctx.Err()
 		return
 	default:
 	}
@@ -376,6 +371,7 @@ func (p *pool) readTask() (task any, err error) {
 	if p.tasks.Len() == 0 {
 		// No more tasks in the queue, worker will exit
 		p.workerCount.Add(-1)
+		p.workerWaitGroup.Done()
 		p.mutex.Unlock()
 
 		err = ErrQueueEmpty
@@ -385,6 +381,7 @@ func (p *pool) readTask() (task any, err error) {
 	if p.maxConcurrency > 0 && int(p.workerCount.Load()) > p.maxConcurrency {
 		// Max concurrency reached, kill the worker
 		p.workerCount.Add(-1)
+		p.workerWaitGroup.Done()
 		p.mutex.Unlock()
 
 		err = ErrMaxConcurrencyReached
@@ -420,8 +417,10 @@ func (p *pool) updateMetrics(err error) {
 
 func (p *pool) Stop() Task {
 	return Submit(func() {
-		// Stop accepting new tasks
+		// Stop accepting new tasks while holding the lock to avoid race conditions.
+		p.mutex.Lock()
 		p.closed.Store(true)
+		p.mutex.Unlock()
 
 		// Wait for all workers to finish executing all tasks (including the ones in the queue)
 		p.workerWaitGroup.Wait()

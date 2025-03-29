@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -116,6 +117,7 @@ func TestPoolWithContextCanceled(t *testing.T) {
 	pool.Stop().Wait()
 
 	assert.True(t, executedCount.Load() < int64(taskCount))
+	assert.Equal(t, int64(0), pool.RunningWorkers())
 }
 
 func TestPoolMetrics(t *testing.T) {
@@ -338,4 +340,84 @@ func TestPoolResize(t *testing.T) {
 	close(taskWait)
 
 	pool.Stop().Wait()
+}
+
+func TestPoolSubmitWhileStopping(t *testing.T) {
+
+	pool := NewPool(10)
+
+	task := pool.Submit(func() {
+		// Wait until the pool is stopped
+		for !pool.Stopped() {
+			time.Sleep(1 * time.Millisecond)
+		}
+
+		assert.Equal(t, true, pool.Stopped())
+
+		// Submit a task to the pool while it is stopping
+		err := pool.Submit(func() {}).Wait()
+
+		assert.Equal(t, ErrPoolStopped, err)
+
+		err = pool.Go(func() {})
+
+		assert.Equal(t, ErrPoolStopped, err)
+
+		err = pool.SubmitErr(func() error {
+			return errors.New("sample error")
+		}).Wait()
+
+		assert.Equal(t, ErrPoolStopped, err)
+	})
+
+	stopErr := pool.Stop().Wait()
+
+	assert.Equal(t, nil, task.Wait())
+
+	assert.Equal(t, nil, stopErr)
+
+	err := pool.Submit(func() {}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	err = pool.Go(func() {})
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	err = pool.SubmitErr(func() error {
+		return errors.New("sample error")
+	}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	pool.StopAndWait()
+}
+
+// Test that submitting tasks while the pool is stopping doesn't lead to a data race.
+// Author: https://github.com/korotin
+func TestPoolSubmitWhileStoppingHasNoRace(t *testing.T) {
+	pool := NewPool(0)
+
+	wg := sync.WaitGroup{}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		time.Sleep(500 * time.Microsecond)
+		pool.StopAndWait()
+	}()
+
+	for i := 0; i < 10000; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			pool.Submit(func() {
+				time.Sleep(10 * time.Millisecond)
+			})
+		}()
+	}
+
+	wg.Wait()
 }
