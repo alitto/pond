@@ -67,6 +67,7 @@ type basePool interface {
 	Context() context.Context
 
 	// Stops the pool and returns a future that can be used to wait for all tasks pending to complete.
+	// The pool will not accept new tasks after the pool has been stopped.
 	Stop() Task
 
 	// Stops the pool and waits for all tasks to complete.
@@ -86,12 +87,19 @@ type Pool interface {
 	basePool
 
 	// Submits a task to the pool without waiting for it to complete.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, this method will return ErrPoolStopped.
 	Go(task func()) error
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, the returned future will resolve to ErrPoolStopped.
 	Submit(task func()) Task
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete.
+	// The task function must return an error.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, the returned future will resolve to ErrPoolStopped.
 	SubmitErr(task func() error) Task
 
 	// Creates a new subpool with the specified maximum concurrency and options.
@@ -278,8 +286,12 @@ func (p *pool) blockingSubmit(task any) error {
 }
 
 func (p *pool) trySubmit(task any) error {
-	// Check if the pool has been stopped
+	p.mutex.Lock()
+
+	// Check if the pool has been stopped while holding the lock
+	// to avoid race conditions on the workers wait group if the pool is being stopped.
 	if p.Stopped() {
+		p.mutex.Unlock()
 		return ErrPoolStopped
 	}
 
@@ -287,8 +299,6 @@ func (p *pool) trySubmit(task any) error {
 
 	var poppedTask any
 	var tasksLen int
-
-	p.mutex.Lock()
 
 	// Context was cancelled while waiting for the lock
 	select {
@@ -420,8 +430,10 @@ func (p *pool) updateMetrics(err error) {
 
 func (p *pool) Stop() Task {
 	return Submit(func() {
-		// Stop accepting new tasks
+		// Stop accepting new tasks while holding the lock to avoid race conditions.
+		p.mutex.Lock()
 		p.closed.Store(true)
+		p.mutex.Unlock()
 
 		// Wait for all workers to finish executing all tasks (including the ones in the queue)
 		p.workerWaitGroup.Wait()

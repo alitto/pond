@@ -339,3 +339,54 @@ func TestPoolResize(t *testing.T) {
 
 	pool.Stop().Wait()
 }
+
+func TestPoolSubmitWhileStopping(t *testing.T) {
+
+	pool := NewPool(10)
+
+	task := pool.Submit(func() {
+		// Wait until the pool is stopped
+		for !pool.Stopped() {
+			time.Sleep(1 * time.Millisecond)
+		}
+
+		assert.Equal(t, true, pool.Stopped())
+
+		// Submit a task to the pool while it is stopping
+		err := pool.Submit(func() {}).Wait()
+
+		assert.Equal(t, ErrPoolStopped, err)
+
+		err = pool.Go(func() {})
+
+		assert.Equal(t, ErrPoolStopped, err)
+
+		err = pool.SubmitErr(func() error {
+			return errors.New("sample error")
+		}).Wait()
+
+		assert.Equal(t, ErrPoolStopped, err)
+	})
+
+	stopErr := pool.Stop().Wait()
+
+	assert.Equal(t, nil, task.Wait())
+
+	assert.Equal(t, nil, stopErr)
+
+	err := pool.Submit(func() {}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	err = pool.Go(func() {})
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	err = pool.SubmitErr(func() error {
+		return errors.New("sample error")
+	}).Wait()
+
+	assert.Equal(t, ErrPoolStopped, err)
+
+	pool.StopAndWait()
+}

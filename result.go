@@ -11,9 +11,14 @@ type ResultPool[R any] interface {
 	basePool
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, this method will return ErrPoolStopped.
 	Submit(task func() R) Result[R]
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
+	// The task function must return a result and an error.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, this method will return ErrPoolStopped.
 	SubmitErr(task func() (R, error)) Result[R]
 
 	// Creates a new subpool with the specified maximum concurrency and options.
