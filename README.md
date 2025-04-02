@@ -437,7 +437,7 @@ pool.Resize(5)
 ```
 
 When resizing a pool:
-- The new maximum concurrency must be greater than 0
+- The new maximum concurrency must be greater than or equal to 0 (0 means no limit)
 - If you increase the size, new workers will be created as needed up to the new maximum
 - If you decrease the size, existing workers will continue running until they complete their current tasks, but no new workers will be created until the number of running workers is below the new maximum
 

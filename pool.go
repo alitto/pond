@@ -146,33 +146,31 @@ func (p *pool) MaxConcurrency() int {
 }
 
 func (p *pool) Resize(maxConcurrency int) {
-	if maxConcurrency <= 0 {
-		panic(errors.New("maxConcurrency must be greater than 0"))
+	if maxConcurrency == 0 {
+		maxConcurrency = math.MaxInt
+	}
+
+	if maxConcurrency < 0 {
+		panic(errors.New("maxConcurrency must be greater than or equal to 0"))
 	}
 
 	p.mutex.Lock()
-	defer p.mutex.Unlock()
 
-	delta := maxConcurrency - p.maxConcurrency
+	// Calculate the number of new workers to launch to reach the new max concurrency or the number of tasks in the queue, whichever is smaller
+	newWorkers := int(math.Min(float64(maxConcurrency-p.maxConcurrency), float64(p.tasks.Len())))
 
 	p.maxConcurrency = maxConcurrency
 
-	if delta > 0 {
-		// Increase the number of workers by delta if there are tasks in the queue
-		queuedTasks := int(p.tasks.Len())
+	if newWorkers > 0 {
+		p.workerCount.Add(int64(newWorkers))
+		p.workerWaitGroup.Add(newWorkers)
+	}
 
-		for i := 0; i < delta && i < queuedTasks; i++ {
-			p.workerCount.Add(1)
-			p.workerWaitGroup.Add(1)
+	p.mutex.Unlock()
 
-			if p.parent == nil {
-				// Launch a new worker
-				go p.worker(nil)
-			} else {
-				// Submit a task to the parent pool
-				p.subpoolSubmit(nil)
-			}
-		}
+	// Launch the new workers
+	for i := 0; i < newWorkers; i++ {
+		p.launchWorker(nil)
 	}
 }
 
@@ -222,6 +220,23 @@ func (p *pool) worker(task any) {
 		if readTaskErr != nil {
 			return
 		}
+	}
+}
+
+func (p *pool) subpoolWorker(task any) func() (output any, err error) {
+	return func() (output any, err error) {
+		if task != nil {
+			output, err = invokeTask[any](task)
+
+			p.updateMetrics(err)
+		}
+
+		// Attempt to submit the next task to the parent pool
+		if task, err := p.readTask(); err == nil {
+			p.parent.submit(p.subpoolWorker(task))
+		}
+
+		return
 	}
 }
 
@@ -324,32 +339,20 @@ func (p *pool) trySubmit(task any) error {
 
 	p.mutex.Unlock()
 
-	if p.parent == nil {
-		// Launch a new worker
-		go p.worker(task)
-	} else {
-		// Submit task to the parent pool
-		p.subpoolSubmit(task)
-	}
+	p.launchWorker(task)
 
 	return nil
 }
 
-func (p *pool) subpoolSubmit(task any) error {
-	return p.parent.submit(func() (output any, err error) {
-		if task != nil {
-			output, err = invokeTask[any](task)
-
-			p.updateMetrics(err)
-		}
-
-		// Attempt to submit the next task to the parent pool
-		if task, err := p.readTask(); err == nil {
-			p.subpoolSubmit(task)
-		}
-
-		return
-	})
+func (p *pool) launchWorker(task any) {
+	if p.parent == nil {
+		// Launch a new worker
+		go p.worker(task)
+	} else {
+		// Submit a task to the parent pool wrapped in a function that will
+		// submit the next task to the parent pool when it completes (subpool worker)
+		p.parent.submit(p.subpoolWorker(task))
+	}
 }
 
 func (p *pool) readTask() (task any, err error) {
@@ -462,8 +465,8 @@ func newPool(maxConcurrency int, parent *pool, options ...Option) *pool {
 		maxConcurrency = math.MaxInt
 	}
 
-	if maxConcurrency <= 0 {
-		panic(errors.New("maxConcurrency must be greater than 0"))
+	if maxConcurrency < 0 {
+		panic(errors.New("maxConcurrency must be greater than or equal to 0"))
 	}
 
 	pool := &pool{
@@ -492,6 +495,8 @@ func newPool(maxConcurrency int, parent *pool, options ...Option) *pool {
 	return pool
 }
 
+// NewPool creates a new pool with the given maximum concurrency and options.
+// The new maximum concurrency must be greater than or equal to 0 (0 means no limit).
 func NewPool(maxConcurrency int, options ...Option) Pool {
 	return newPool(maxConcurrency, nil, options...)
 }

@@ -3,6 +3,7 @@ package pond
 import (
 	"context"
 	"errors"
+	"math"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -175,7 +176,7 @@ func TestPoolSubmitOnStoppedPool(t *testing.T) {
 }
 
 func TestNewPoolWithInvalidMaxConcurrency(t *testing.T) {
-	assert.PanicsWithError(t, "maxConcurrency must be greater than 0", func() {
+	assert.PanicsWithError(t, "maxConcurrency must be greater than or equal to 0", func() {
 		NewPool(-1)
 	})
 }
@@ -340,6 +341,20 @@ func TestPoolResize(t *testing.T) {
 	close(taskWait)
 
 	pool.Stop().Wait()
+}
+
+func TestPoolResizeWithZeroMaxConcurrency(t *testing.T) {
+	pool := NewPool(10)
+
+	pool.Resize(0)
+
+	assert.Equal(t, math.MaxInt, pool.MaxConcurrency())
+}
+
+func TestPoolResizeWithNegativeMaxConcurrency(t *testing.T) {
+	assert.PanicsWithError(t, "maxConcurrency must be greater than or equal to 0", func() {
+		NewPool(10).Resize(-1)
+	})
 }
 
 func TestPoolSubmitWhileStopping(t *testing.T) {
