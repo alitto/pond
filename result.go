@@ -71,6 +71,9 @@ func newResultPool[R any](maxConcurrency int, parent *pool, options ...Option) *
 	}
 }
 
+// NewResultPool creates a new result pool with the given maximum concurrency and options.
+// Result pools are generic pools that can be used to submit tasks that return a result.
+// The new maximum concurrency must be greater than or equal to 0 (0 means no limit).
 func NewResultPool[R any](maxConcurrency int, options ...Option) ResultPool[R] {
 	return newResultPool[R](maxConcurrency, nil, options...)
 }

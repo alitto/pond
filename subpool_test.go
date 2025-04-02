@@ -159,7 +159,7 @@ func TestSubpoolStop(t *testing.T) {
 func TestSubpoolMaxConcurrency(t *testing.T) {
 	pool := NewPool(10)
 
-	assert.PanicsWithError(t, "maxConcurrency must be greater than 0", func() {
+	assert.PanicsWithError(t, "maxConcurrency must be greater than or equal to 0", func() {
 		pool.NewSubpool(-1)
 	})
 
