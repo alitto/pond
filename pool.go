@@ -52,6 +52,9 @@ type basePool interface {
 	// Returns the total number of tasks that have completed (either successfully or with an error).
 	CompletedTasks() uint64
 
+	// Returns the number of tasks that have been dropped because the queue was full.
+	DroppedTasks() uint64
+
 	// Returns the maximum concurrency of the pool.
 	MaxConcurrency() int
 
@@ -102,6 +105,19 @@ type Pool interface {
 	// If the pool has been stopped, the returned future will resolve to ErrPoolStopped.
 	SubmitErr(task func() error) Task
 
+	// Attempts to submit a task to the pool and returns a future that can be used to wait for the task to complete
+	// and a boolean indicating whether the task was submitted successfully.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, the returned future will resolve to ErrPoolStopped.
+	TrySubmit(task func()) (Task, bool)
+
+	// Attempts to submit a task to the pool and returns a future that can be used to wait for the task to complete
+	// and a boolean indicating whether the task was submitted successfully.
+	// The task function must return an error.
+	// The pool will not accept new tasks after it has been stopped.
+	// If the pool has been stopped, the returned future will resolve to ErrPoolStopped.
+	TrySubmitErr(task func() error) (Task, bool)
+
 	// Creates a new subpool with the specified maximum concurrency and options.
 	NewSubpool(maxConcurrency int, options ...Option) Pool
 
@@ -128,6 +144,7 @@ type pool struct {
 	submittedTaskCount  atomic.Uint64
 	successfulTaskCount atomic.Uint64
 	failedTaskCount     atomic.Uint64
+	droppedTaskCount    atomic.Uint64
 }
 
 func (p *pool) Context() context.Context {
@@ -206,6 +223,10 @@ func (p *pool) CompletedTasks() uint64 {
 	return p.successfulTaskCount.Load() + p.failedTaskCount.Load()
 }
 
+func (p *pool) DroppedTasks() uint64 {
+	return p.droppedTaskCount.Load()
+}
+
 func (p *pool) worker(task any) {
 	var readTaskErr, err error
 	for {
@@ -233,7 +254,7 @@ func (p *pool) subpoolWorker(task any) func() (output any, err error) {
 
 		// Attempt to submit the next task to the parent pool
 		if task, err := p.readTask(); err == nil {
-			p.parent.submit(p.subpoolWorker(task))
+			p.parent.submit(p.subpoolWorker(task), p.nonBlocking)
 		}
 
 		return
@@ -241,44 +262,69 @@ func (p *pool) subpoolWorker(task any) func() (output any, err error) {
 }
 
 func (p *pool) Go(task func()) error {
-	return p.submit(task)
+	return p.submit(task, p.nonBlocking)
 }
 
 func (p *pool) Submit(task func()) Task {
-	return p.wrapAndSubmit(task)
-}
-
-func (p *pool) SubmitErr(task func() error) Task {
-	return p.wrapAndSubmit(task)
-}
-
-func (p *pool) wrapAndSubmit(task any) Task {
-	if p.Stopped() {
-		return poolStoppedFuture
-	}
-
-	ctx := p.Context()
-	future, resolve := future.NewFuture(ctx)
-
-	wrapped := wrapTask[struct{}, func(error)](task, resolve)
-
-	if err := p.submit(wrapped); err != nil {
-		resolve(err)
-		return future
-	}
-
+	future, _ := p.wrapAndSubmit(task, p.nonBlocking)
 	return future
 }
 
-func (p *pool) submit(task any) error {
-	if p.nonBlocking {
-		return p.trySubmit(task)
-	}
-
-	return p.blockingSubmit(task)
+func (p *pool) SubmitErr(task func() error) Task {
+	future, _ := p.wrapAndSubmit(task, p.nonBlocking)
+	return future
 }
 
-func (p *pool) blockingSubmit(task any) error {
+func (p *pool) TrySubmit(task func()) (Task, bool) {
+	return p.wrapAndSubmit(task, true)
+}
+
+func (p *pool) TrySubmitErr(task func() error) (Task, bool) {
+	return p.wrapAndSubmit(task, true)
+}
+
+func (p *pool) wrapAndSubmit(task any, nonBlocking bool) (Task, bool) {
+	if p.Stopped() {
+		return poolStoppedFuture, false
+	}
+
+	future, wrappedTask, resolve := p.wrapTask(task)
+
+	if err := p.submit(wrappedTask, nonBlocking); err != nil {
+		resolve(err)
+		return future, false
+	}
+
+	return future, true
+}
+
+func (p *pool) wrapTask(task any) (Task, func() error, func(error)) {
+	ctx := p.Context()
+	future, resolve := future.NewFuture(ctx)
+
+	wrappedTask := wrapTask[struct{}, func(error)](task, resolve)
+
+	return future, wrappedTask, resolve
+}
+
+func (p *pool) submit(task any, nonBlocking bool) (err error) {
+
+	p.submittedTaskCount.Add(1)
+
+	if nonBlocking {
+		err = p.trySubmit(task)
+	} else {
+		err = p.blockingTrySubmit(task)
+	}
+
+	if err != nil {
+		p.droppedTaskCount.Add(1)
+	}
+
+	return
+}
+
+func (p *pool) blockingTrySubmit(task any) error {
 	for {
 		if err := p.trySubmit(task); err != ErrQueueFull {
 			return err
@@ -315,8 +361,6 @@ func (p *pool) trySubmit(task any) error {
 		return ErrQueueFull
 	}
 
-	p.submittedTaskCount.Add(1)
-
 	if int(p.workerCount.Load()) >= p.maxConcurrency {
 		// Push the task at the back of the queue
 		p.tasks.Write(task)
@@ -346,12 +390,12 @@ func (p *pool) trySubmit(task any) error {
 
 func (p *pool) launchWorker(task any) {
 	if p.parent == nil {
-		// Launch a new worker
+		// Launch a new worker to execute the task
 		go p.worker(task)
 	} else {
-		// Submit a task to the parent pool wrapped in a function that will
+		// Submit task to the parent pool wrapped in a function that will
 		// submit the next task to the parent pool when it completes (subpool worker)
-		p.parent.submit(p.subpoolWorker(task))
+		p.parent.submit(p.subpoolWorker(task), p.nonBlocking)
 	}
 }
 

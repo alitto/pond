@@ -324,9 +324,11 @@ func TestSubpoolWithQueueSizeOverride(t *testing.T) {
 		subpool.Submit(task())
 	}
 
-	// 7 tasks should have been discarded
 	assert.Equal(t, int64(1), subpool.RunningWorkers())
-	assert.Equal(t, uint64(3), subpool.SubmittedTasks())
+	assert.Equal(t, uint64(11), subpool.SubmittedTasks())
+	assert.Equal(t, uint64(0), subpool.CompletedTasks())
+	assert.Equal(t, uint64(8), subpool.DroppedTasks())
+	assert.Equal(t, uint64(2), subpool.WaitingTasks())
 
 	// Unblock all running tasks
 	close(taskWait)

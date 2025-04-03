@@ -124,7 +124,7 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 		}, err)
 
 		return err
-	})
+	}, g.pool.nonBlocking)
 
 	if err != nil {
 		g.taskWaitGroup.Done()

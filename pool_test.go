@@ -132,7 +132,7 @@ func TestPoolMetrics(t *testing.T) {
 	assert.Equal(t, uint64(0), pool.FailedTasks())
 	assert.Equal(t, uint64(0), pool.SuccessfulTasks())
 	assert.Equal(t, uint64(0), pool.WaitingTasks())
-
+	assert.Equal(t, uint64(0), pool.DroppedTasks())
 	var taskCount int = 10000
 	var executedCount atomic.Int64
 
@@ -155,6 +155,7 @@ func TestPoolMetrics(t *testing.T) {
 	assert.Equal(t, uint64(taskCount), pool.CompletedTasks())
 	assert.Equal(t, uint64(taskCount/2), pool.FailedTasks())
 	assert.Equal(t, uint64(taskCount/2), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.DroppedTasks())
 }
 
 func TestPoolSubmitOnStoppedPool(t *testing.T) {
@@ -269,11 +270,14 @@ func TestPoolWithQueueSizeAndNonBlocking(t *testing.T) {
 		})
 	}
 
-	// Submit a task that should be rejected
+	// Submit a task that should be dropped
 	task := pool.Submit(func() {})
+
 	// Unblock tasks
 	close(taskWait)
+
 	assert.Equal(t, ErrQueueFull, task.Wait())
+	assert.Equal(t, uint64(1), pool.DroppedTasks())
 
 	pool.Stop().Wait()
 }
@@ -435,4 +439,91 @@ func TestPoolSubmitWhileStoppingHasNoRace(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestPoolTrySubmit(t *testing.T) {
+	pool := NewPool(1, WithQueueSize(1))
+
+	completeFirstTask := make(chan struct{})
+
+	// Test successful submission
+	task, ok := pool.TrySubmit(func() {
+		completeFirstTask <- struct{}{}
+	})
+	assert.True(t, ok)
+
+	// Test submission to queue
+	task2, ok := pool.TrySubmit(func() {})
+	assert.True(t, ok)
+
+	// Test failed submission when queue is full
+	task3, ok := pool.TrySubmit(func() {})
+	assert.True(t, !ok)
+
+	<-completeFirstTask
+
+	// Test submission to stopped pool
+	pool.StopAndWait()
+	task4, ok := pool.TrySubmit(func() {})
+	assert.True(t, !ok)
+	assert.Equal(t, ErrPoolStopped, task4.Wait())
+
+	// Verify tasks completed successfully
+	assert.Equal(t, nil, task.Wait())
+	assert.Equal(t, nil, task2.Wait())
+	assert.Equal(t, ErrQueueFull, task3.Wait())
+
+	// Verify metrics
+	assert.Equal(t, uint64(3), pool.SubmittedTasks())
+	assert.Equal(t, uint64(2), pool.CompletedTasks())
+	assert.Equal(t, uint64(2), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+	assert.Equal(t, uint64(1), pool.DroppedTasks())
+}
+
+func TestPoolTrySubmitErr(t *testing.T) {
+	pool := NewPool(1, WithQueueSize(1))
+
+	completeFirstTask := make(chan struct{})
+
+	// Test successful submission with no error
+	task, ok := pool.TrySubmitErr(func() error {
+		completeFirstTask <- struct{}{}
+		return nil
+	})
+	assert.True(t, ok)
+
+	// Test submission to queue with error
+	task2, ok := pool.TrySubmitErr(func() error {
+		return errors.New("sample error")
+	})
+	assert.True(t, ok)
+
+	// Test failed submission when queue is full
+	task3, ok := pool.TrySubmitErr(func() error {
+		return nil
+	})
+	assert.True(t, !ok)
+
+	<-completeFirstTask
+
+	// Test submission to stopped pool
+	pool.StopAndWait()
+	task4, ok := pool.TrySubmitErr(func() error {
+		return nil
+	})
+	assert.True(t, !ok)
+	assert.Equal(t, ErrPoolStopped, task4.Wait())
+
+	// Verify tasks completed successfully
+	assert.Equal(t, nil, task.Wait())
+	assert.Equal(t, "sample error", task2.Wait().Error())
+	assert.Equal(t, ErrQueueFull, task3.Wait())
+
+	// Verify metrics
+	assert.Equal(t, uint64(3), pool.SubmittedTasks())
+	assert.Equal(t, uint64(2), pool.CompletedTasks())
+	assert.Equal(t, uint64(1), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(1), pool.FailedTasks())
+	assert.Equal(t, uint64(1), pool.DroppedTasks())
 }
