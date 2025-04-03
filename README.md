@@ -400,12 +400,32 @@ pool := pond.NewPool(1, pond.WithQueueSize(10))
 
 **Blocking vs non-blocking task submission** 
 
-When a pool defines a queue size (bounded), you can also specify how to handle tasks submitted when the queue is full. By default, task submission blocks until there is space in the queue (blocking mode), but you can change this behavior to non-blocking by setting the `WithNonBlocking` option to `true` when creating a pool. If the queue is full and non-blocking task submission is enabled, the task is dropped and an error is returned (`ErrQueueFull`).
+When a pool defines a queue size (bounded), you can also specify how to handle tasks submitted when the queue is full. This can be done in two ways:
+- **Per task submission**: You can use `TrySubmit` and `TrySubmitErr` methods to attempt to submit a task and get a boolean indicating whether the task was submitted successfully.
+
+```go
+// Create a pool with a maximum of 10 tasks in the queue
+pool := pond.NewPool(1, pond.WithQueueSize(10))
+
+// Submit a task to the pool
+task, ok := pool.TrySubmit(func() {
+	// Do some work
+})
+
+// Check if the task was submitted successfully
+if !ok {
+	fmt.Println("Task submission failed because the queue is full")
+}
+```
+
+- **Global non-blocking task submission**: You can set the `NonBlocking` option to `true` when creating a pool to enable non-blocking task submission. If the queue is full and non-blocking task submission is enabled, the task is dropped and an error is returned (`ErrQueueFull`).
 
 ``` go
 // Create a pool with a maximum of 10 tasks in the queue and non-blocking task submission
 pool := pond.NewPool(1, pond.WithQueueSize(10), pond.WithNonBlocking(true))
 ```
+
+**Note**: you can technically use `TrySubmit` and `TrySubmitErr` methods or `NonBlocking` option for both bounded and unbounded task queues, but they are only useful when the queue is bounded. For unbounded task queues there is always space in the queue and non-blocking submission will always succeed.
 
 ### Resizing pools (v2)
 
@@ -446,11 +466,12 @@ When resizing a pool:
 Each worker pool instance exposes useful metrics that can be queried through the following methods:
 
 - `pool.RunningWorkers() int64`: Current number of running workers
-- `pool.SubmittedTasks() uint64`: Total number of tasks submitted since the pool was created
+- `pool.SubmittedTasks() uint64`: Total number of tasks submitted since the pool was created and before it was stopped. This includes tasks that were dropped because the queue was full
 - `pool.WaitingTasks() uint64`: Current number of tasks in the queue that are waiting to be executed
 - `pool.SuccessfulTasks() uint64`: Total number of tasks that have successfully completed their execution since the pool was created
 - `pool.FailedTasks() uint64`: Total number of tasks that completed with panic since the pool was created
 - `pool.CompletedTasks() uint64`: Total number of tasks that have completed their execution either successfully or with panic since the pool was created
+- `pool.DroppedTasks() uint64`: Total number of tasks that were dropped because the queue was full since the pool was created
 
 In our [Prometheus example](./examples/prometheus/main.go) we showcase how to configure collectors for these metrics and expose them to Prometheus.
 
