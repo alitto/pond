@@ -439,13 +439,13 @@ func (p *pool) readTask() (task any, err error) {
 
 	p.mutex.Unlock()
 
-	// Notify push waiters that there is space in the queue to push more elements
-	p.notifyPushWaiter()
+	// Notify a submit waiter there is room in the queue for a new task
+	p.notifySubmitWaiter()
 
 	return
 }
 
-func (p *pool) notifyPushWaiter() {
+func (p *pool) notifySubmitWaiter() {
 	// Wake up one of the waiters (if any)
 	select {
 	case p.submitWaiters <- struct{}{}:
@@ -518,7 +518,10 @@ func newPool(maxConcurrency int, parent *pool, options ...Option) *pool {
 		nonBlocking:    DefaultNonBlocking,
 		maxConcurrency: maxConcurrency,
 		queueSize:      DefaultQueueSize,
-		submitWaiters:  make(chan struct{}),
+		// Buffer size of 1 to prevent deadlock when read on the submitWaiters channel happens
+		// after the write on the same channel in the notifySubmitWaiter method.
+		// See https://github.com/alitto/pond/issues/108
+		submitWaiters: make(chan struct{}, 1),
 	}
 
 	if parent != nil {
