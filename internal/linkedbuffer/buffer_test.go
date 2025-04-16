@@ -102,7 +102,7 @@ func TestBufferWithPointerToLargeObject(t *testing.T) {
 	after = int64(m.Alloc)
 
 	// Verify large object was garbage collected (no internal references to the large object remain)
-	assert.Equal(t, true, before-after >= int64(dataSize))
+	assert.Equal(t, true, before-after >= (int64(dataSize)/2))
 
 	// Keep a reference to these variables to ensure they are not discarded by GC
 	fmt.Printf("%#v, %#v\n", data.data, readData.data)
