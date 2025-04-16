@@ -14,6 +14,7 @@ type buffer[T any] struct {
 	nextWriteIndex int
 	nextReadIndex  int
 	next           *buffer[T]
+	zero           T
 }
 
 func newBuffer[T any](capacity int) *buffer[T] {
@@ -56,6 +57,12 @@ func (b *buffer[T]) Read() (value T, err error) {
 	}
 
 	value = b.data[b.nextReadIndex]
+
+	// Remove reference to read value to prevent memory leaks caused by
+	// holding references to submitted tasks.
+	// See https://github.com/alitto/pond/issues/110
+	b.data[b.nextReadIndex] = b.zero
+
 	b.nextReadIndex++
 	return
 }
