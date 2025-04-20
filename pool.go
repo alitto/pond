@@ -385,6 +385,9 @@ func (p *pool) trySubmit(task any) error {
 
 	p.launchWorker(task)
 
+	// Notify a submit waiter there is room in the queue for a new task
+	p.notifySubmitWaiter()
+
 	return nil
 }
 
@@ -420,6 +423,9 @@ func (p *pool) readTask() (task any, err error) {
 		p.workerCount.Add(-1)
 		p.workerWaitGroup.Done()
 		p.mutex.Unlock()
+
+		// Notify a submit waiter there is room in the queue for a new task
+		p.notifySubmitWaiter()
 
 		err = ErrQueueEmpty
 		return
