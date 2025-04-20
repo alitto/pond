@@ -361,6 +361,69 @@ func TestPoolResizeWithNegativeMaxConcurrency(t *testing.T) {
 	})
 }
 
+func TestPoolWithQueueSizeOne(t *testing.T) {
+
+	pool := NewPool(1, WithQueueSize(1))
+
+	task1 := make(chan struct{})
+	task2 := make(chan struct{})
+	taskCompleted := make(chan int, 10)
+
+	// This task will start running immediately
+	pool.Submit(func() {
+		<-task1
+		taskCompleted <- 1
+	})
+
+	// This task will fill up the queue
+	pool.Submit(func() {
+		<-task2
+		taskCompleted <- 2
+	})
+
+	go func() {
+		// This task will block because the queue is full
+		pool.Submit(func() {
+			taskCompleted <- 3
+		})
+	}()
+
+	// Wait for the task 3 to block on submit
+	time.Sleep(10 * time.Millisecond)
+
+	go func() {
+		// This task will block because the queue is full
+		pool.Submit(func() {
+			taskCompleted <- 4
+		})
+	}()
+
+	// Wait for the task 4 to block on submit
+	time.Sleep(10 * time.Millisecond)
+
+	// Unblock first 2 tasks and attempt to submit another task right away
+	task1 <- struct{}{}
+	task2 <- struct{}{}
+
+	// Wait for all tasks to run
+	time.Sleep(10 * time.Millisecond)
+
+	pool.StopAndWait()
+
+	close(taskCompleted)
+
+	results := make([]int, 0)
+
+	for t := range taskCompleted {
+		results = append(results, t)
+	}
+
+	assert.Equal(t, 4, len(results))
+	assert.Equal(t, 1, results[0])
+	assert.Equal(t, 2, results[1])
+	assert.Equal(t, 7, results[2]+results[3])
+}
+
 func TestPoolSubmitWhileStopping(t *testing.T) {
 
 	pool := NewPool(10)
