@@ -34,6 +34,11 @@ type TaskGroup interface {
 
 	// Stops the group and cancels all remaining tasks. Running tasks are not interrupted.
 	Stop()
+
+	// Returns the context associated with this group.
+	// This context will be cancelled when either the parent context is cancelled
+	// or any task in the group returns an error, whichever comes first.
+	Context() context.Context
 }
 
 // ResultTaskGroup represents a group of tasks that can be executed concurrently.
@@ -81,6 +86,10 @@ func (g *abstractTaskGroup[T, E, O]) Done() <-chan struct{} {
 
 func (g *abstractTaskGroup[T, E, O]) Stop() {
 	g.future.Cancel(ErrGroupStopped)
+}
+
+func (g *abstractTaskGroup[T, E, O]) Context() context.Context {
+	return g.future.Context()
 }
 
 func (g *abstractTaskGroup[T, E, O]) Submit(tasks ...T) *abstractTaskGroup[T, E, O] {

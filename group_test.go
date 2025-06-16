@@ -3,6 +3,7 @@ package pond
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,9 +100,15 @@ func TestResultTaskGroupWaitWithMultipleErrors(t *testing.T) {
 
 	sampleErr := errors.New("sample error")
 
+	wg := sync.WaitGroup{}
+	wg.Add(5)
+
 	for i := 0; i < 5; i++ {
 		i := i
 		group.SubmitErr(func() (int, error) {
+			wg.Done()
+			wg.Wait() // Wait until all tasks have started
+
 			if i%2 == 0 {
 				time.Sleep(10 * time.Millisecond)
 				return 0, sampleErr
@@ -413,4 +420,47 @@ func TestTaskGroupWaitingTasks(t *testing.T) {
 	close(start)
 	close(end)
 	group.Wait()
+}
+
+func TestTaskGroupContext(t *testing.T) {
+	pool := NewPool(2)
+
+	group := pool.NewGroupContext(context.Background())
+
+	tasksRunning := sync.WaitGroup{}
+	tasksRunning.Add(2)
+
+	group.SubmitErr(func() error {
+		// Wait for all tasks to be running
+		tasksRunning.Done()
+		tasksRunning.Wait()
+
+		return errors.New("first task error")
+	})
+
+	group.SubmitErr(func() error {
+		// Wait for all tasks to be running
+		tasksRunning.Done()
+		tasksRunning.Wait()
+
+		select {
+		case <-group.Context().Done():
+			return errors.New("second task canceled")
+		case <-time.After(100 * time.Millisecond):
+			return nil
+		}
+	})
+
+	group.Submit(func() {})
+
+	err := group.Wait()
+
+	pool.StopAndWait()
+
+	assert.Equal(t, "first task error", err.Error())
+	assert.Equal(t, struct{}{}, <-group.Done())
+	assert.Equal(t, struct{}{}, <-group.Context().Done())
+	assert.Equal(t, uint64(3), pool.SubmittedTasks())
+	assert.Equal(t, uint64(0), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(3), pool.FailedTasks())
 }

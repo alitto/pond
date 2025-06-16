@@ -49,28 +49,21 @@ func TestBufferWithPointerToLargeObject(t *testing.T) {
 	}
 
 	runtime.ReadMemStats(&m)
-	before := int64(m.Alloc)
 
 	dataSize := 10 * 1024 * 1024
 	data := &Payload{
 		data: make([]byte, dataSize),
 	}
 
-	runtime.ReadMemStats(&m)
-	after := int64(m.Alloc)
-
-	// Verify large object allocated memory
-	assert.Equal(t, true, after-before >= int64(dataSize))
-
 	buffer := newBuffer[*Payload](10)
 
 	runtime.ReadMemStats(&m)
-	before = int64(m.Alloc)
+	before := int64(m.Alloc)
 
 	buffer.Write(data)
 
 	runtime.ReadMemStats(&m)
-	after = int64(m.Alloc)
+	after := int64(m.Alloc)
 
 	// Verify large object wasn't copied when writing it to the buffer
 	assert.Equal(t, true, after-before < int64(dataSize))

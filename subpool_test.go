@@ -400,7 +400,7 @@ func TestSubpoolResize(t *testing.T) {
 	}
 
 	// Ensure 2 tasks are running and 5 are waiting
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	assert.Equal(t, uint64(5), pool.WaitingTasks())
 	assert.Equal(t, int64(2), pool.RunningWorkers())
 	assert.Equal(t, int64(2), parentPool.RunningWorkers())

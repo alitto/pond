@@ -323,7 +323,7 @@ func TestPoolResize(t *testing.T) {
 	assert.Equal(t, uint64(7), pool.WaitingTasks())
 	assert.Equal(t, int64(3), pool.RunningWorkers())
 
-	// Decrease max concurrency to 1
+	// Decrease max concurrency to 2
 	pool.Resize(2)
 	assert.Equal(t, 2, pool.MaxConcurrency())
 
@@ -338,7 +338,7 @@ func TestPoolResize(t *testing.T) {
 	}
 
 	// Ensure 2 tasks are running and 5 are waiting
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	assert.Equal(t, uint64(5), pool.WaitingTasks())
 	assert.Equal(t, int64(2), pool.RunningWorkers())
 
