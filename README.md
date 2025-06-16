@@ -220,11 +220,33 @@ group := pool.NewGroup()
 for i := 0; i < 20; i++ {
 	i := i
 	group.SubmitErr(func() error {
-		if n == 10 {
-			return errors.New("An error occurred")
-		}
-		fmt.Printf("Running group task #%d\n", i)
-		return nil
+		return doSomethingThatCanFail()
+	})
+}
+
+// Wait for all tasks in the group to complete or the first error to occur
+err := group.Wait()
+```
+
+#### Cancelling tasks immediately
+
+When the first error occurs, tasks that are in the queue will be aborted but any running task will not be disrupted. The call to `group.Wait()` will not wait for these "in-flight" tasks to complete but they will continue running until completion nonetheless.
+
+If you also need to stop these "in-flight" tasks when the first error occurs, you can reference the group's context (accessible via `group.Context()`) from any long-running operation carried out within these tasks. Here's an example:
+
+``` go
+// Create a pool with limited concurrency
+pool := pond.NewPool(10)
+
+// Create a task group
+group := pool.NewGroup()
+
+// Submit a group of tasks
+for i := 0; i < 20; i++ {
+	i := i
+	group.SubmitErr(func() error {
+		// Cancel all in-flight tasks when the first error occurs
+		return doSomethingThatCanFailInContext(group.Context())
 	})
 }
 
