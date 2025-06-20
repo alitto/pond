@@ -44,6 +44,14 @@ func TestLinkedBuffer(t *testing.T) {
 	assert.Equal(t, uint64(1), buf.Len())
 	assert.Equal(t, uint64(3), buf.WriteCount())
 	assert.Equal(t, uint64(2), buf.ReadCount())
+
+	//test cap extension
+	capTestBuf := NewLinkedBuffer[int](2, 10)
+
+	capTestBuf.Write(1)
+	capTestBuf.Write(2)
+	capTestBuf.Write(3)
+	assert.Equal(t, capTestBuf.readBuffer.next.Cap(), 4)
 }
 
 func TestLinkedBufferLen(t *testing.T) {
