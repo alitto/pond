@@ -10,8 +10,8 @@ type Task interface {
 	Wait() error
 }
 
-// TaskGroup represents a task that yields a result. If the task fails, the error can be retrieved.
-type Result[R any] interface {
+// ResultTask represents a task that yields a result. If the task fails, the error can be retrieved.
+type ResultTask[R any] interface {
 
 	// Done returns a channel that is closed when the task is complete or has failed.
 	Done() <-chan struct{}

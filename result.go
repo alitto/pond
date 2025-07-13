@@ -13,26 +13,26 @@ type ResultPool[R any] interface {
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
 	// The pool will not accept new tasks after it has been stopped.
 	// If the pool has been stopped, this method will return ErrPoolStopped.
-	Submit(task func() R) Result[R]
+	Submit(task func() R) ResultTask[R]
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
 	// The task function must return a result and an error.
 	// The pool will not accept new tasks after it has been stopped.
 	// If the pool has been stopped, this method will return ErrPoolStopped.
-	SubmitErr(task func() (R, error)) Result[R]
+	SubmitErr(task func() (R, error)) ResultTask[R]
 
 	// Attempts to submit a task to the pool and returns a future that can be used to wait for the task to complete
 	// and a boolean indicating whether the task was submitted successfully.
 	// The pool will not accept new tasks after it has been stopped.
 	// If the pool has been stopped, this method will return ErrPoolStopped.
-	TrySubmit(task func() R) (Result[R], bool)
+	TrySubmit(task func() R) (ResultTask[R], bool)
 
 	// Attempts to submit a task to the pool and returns a future that can be used to wait for the task to complete
 	// and a boolean indicating whether the task was submitted successfully.
 	// The task function must return a result and an error.
 	// The pool will not accept new tasks after it has been stopped.
 	// If the pool has been stopped, this method will return ErrPoolStopped.
-	TrySubmitErr(task func() (R, error)) (Result[R], bool)
+	TrySubmitErr(task func() (R, error)) (ResultTask[R], bool)
 
 	// Creates a new subpool with the specified maximum concurrency and options.
 	NewSubpool(maxConcurrency int, options ...Option) ResultPool[R]
@@ -56,25 +56,25 @@ func (p *resultPool[R]) NewGroupContext(ctx context.Context) ResultTaskGroup[R] 
 	return newResultTaskGroup[R](p.pool, ctx)
 }
 
-func (p *resultPool[R]) Submit(task func() R) Result[R] {
+func (p *resultPool[R]) Submit(task func() R) ResultTask[R] {
 	future, _ := p.submit(task, p.nonBlocking)
 	return future
 }
 
-func (p *resultPool[R]) SubmitErr(task func() (R, error)) Result[R] {
+func (p *resultPool[R]) SubmitErr(task func() (R, error)) ResultTask[R] {
 	future, _ := p.submit(task, p.nonBlocking)
 	return future
 }
 
-func (p *resultPool[R]) TrySubmit(task func() R) (Result[R], bool) {
+func (p *resultPool[R]) TrySubmit(task func() R) (ResultTask[R], bool) {
 	return p.submit(task, true)
 }
 
-func (p *resultPool[R]) TrySubmitErr(task func() (R, error)) (Result[R], bool) {
+func (p *resultPool[R]) TrySubmitErr(task func() (R, error)) (ResultTask[R], bool) {
 	return p.submit(task, true)
 }
 
-func (p *resultPool[R]) submit(task any, nonBlocking bool) (Result[R], bool) {
+func (p *resultPool[R]) submit(task any, nonBlocking bool) (ResultTask[R], bool) {
 	future, resolve := future.NewValueFuture[R](p.Context())
 
 	if p.Stopped() {
