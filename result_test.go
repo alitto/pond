@@ -221,3 +221,74 @@ func TestResultPoolTrySubmitErr(t *testing.T) {
 	assert.Equal(t, uint64(1), pool.FailedTasks())
 	assert.Equal(t, uint64(1), pool.DroppedTasks())
 }
+
+// verifies that the deprecated Result interface and ResultTask are compatible.
+// by assigning ResultTask to Result, testing for compatibility
+func TestResultBackwardCompatibility(t *testing.T) {
+	pool := NewResultPool[string](1)
+	defer pool.StopAndWait()
+
+	const (
+		responseSubmit       = "sample Submit response"
+		responseSubmitErr    = "sample SubmitErr response"
+		responseTrySubmit    = "sample TrySubmit response"
+		responseTrySubmitErr = "sample TrySubmitErr response"
+	)
+
+	var result Result[string] = pool.Submit(func() string {
+		return responseSubmit
+	})
+
+	var resultErr Result[string] = pool.SubmitErr(func() (string, error) {
+		return responseSubmitErr, nil
+	})
+
+	resultTry, ok := pool.TrySubmit(func() string {
+		return responseTrySubmit
+	})
+
+	var resultTryTyped Result[string] = resultTry
+	assert.True(t, ok)
+
+	resultTryErr, ok := pool.TrySubmitErr(func() (string, error) {
+		return responseTrySubmitErr, nil
+	})
+	var resultTryErrTyped Result[string] = resultTryErr
+	assert.True(t, ok)
+
+	// Verify all results work correctly
+	output, err := result.Wait()
+	assert.Equal(t, nil, err)
+	assert.Equal(t, responseSubmit, output)
+
+	output, err = resultErr.Wait()
+	assert.Equal(t, nil, err)
+	assert.Equal(t, responseSubmitErr, output)
+
+	output, err = resultTryTyped.Wait()
+	assert.Equal(t, nil, err)
+	assert.Equal(t, responseTrySubmit, output)
+
+	output, err = resultTryErrTyped.Wait()
+	assert.Equal(t, nil, err)
+	assert.Equal(t, responseTrySubmitErr, output)
+}
+
+// ensures that a function expecting Result[T] can accept a ResultTask[T]
+// testing for usage pattern
+func TestResultInterfaceCompatibility(t *testing.T) {
+	pool := NewResultPool[int](1)
+	defer pool.StopAndWait()
+
+	var processResult = func(r Result[int]) (int, error) {
+		return r.Wait()
+	}
+
+	task := pool.Submit(func() int {
+		return 42
+	})
+
+	result, err := processResult(task)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 42, result)
+}
