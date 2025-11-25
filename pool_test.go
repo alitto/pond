@@ -282,6 +282,68 @@ func TestPoolWithQueueSizeAndNonBlocking(t *testing.T) {
 	pool.Stop().Wait()
 }
 
+func TestPoolWithQueueSizeZero(t *testing.T) {
+
+	pool := NewPool(1, WithQueueSize(0))
+
+	assert.Equal(t, 0, pool.QueueSize())
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+
+	firstTask := pool.Submit(func() {
+		firstStarted <- struct{}{}
+		<-releaseFirst
+	})
+
+	<-firstStarted
+
+	secondTaskCh := make(chan Task, 1)
+	secondRan := make(chan struct{}, 1)
+
+	go func() {
+		task := pool.Submit(func() {
+			secondRan <- struct{}{}
+		})
+		secondTaskCh <- task
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+
+	select {
+	case <-secondTaskCh:
+		t.Fatalf("expected submit to block when queue size is zero and worker is busy")
+	default:
+	}
+
+	droppedTask, ok := pool.TrySubmit(func() {})
+	assert.True(t, !ok)
+	assert.Equal(t, ErrQueueFull, droppedTask.Wait())
+	assert.Equal(t, uint64(1), pool.DroppedTasks())
+
+	close(releaseFirst)
+
+	secondTask := <-secondTaskCh
+	assert.Equal(t, nil, secondTask.Wait())
+
+	select {
+	case <-secondRan:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatalf("second task was not executed after releasing the first")
+	}
+
+	assert.Equal(t, nil, firstTask.Wait())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+	assert.Equal(t, uint64(3), pool.SubmittedTasks())
+	assert.Equal(t, uint64(2), pool.CompletedTasks())
+	assert.Equal(t, uint64(2), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+
+	pool.Stop().Wait()
+}
+
 func TestPoolResize(t *testing.T) {
 
 	pool := NewPool(1, WithQueueSize(10))

@@ -449,6 +449,30 @@ pool := pond.NewPool(1, pond.WithQueueSize(10), pond.WithNonBlocking(true))
 
 **Note**: you can technically use `TrySubmit` and `TrySubmitErr` methods or `NonBlocking` option for both bounded and unbounded task queues, but they are only useful when the queue is bounded. For unbounded task queues there is always space in the queue and non-blocking submission will always succeed.
 
+#### Using the `pond.Unbounded` constant
+
+`pond.Unbounded` is a convenience constant that resolves to the maximum supported queue size. Passing it to `WithQueueSize` keeps the queue effectively infinite while still allowing other queue-related options to be configured explicitly (for example in subpools or helper constructors).
+
+```go
+// Force the queue back to the default unbounded behavior.
+pool := pond.NewPool(8, pond.WithQueueSize(pond.Unbounded), pond.WithNonBlocking(false))
+```
+
+#### Disabling the queue altogether
+
+Passing `WithQueueSize(0)` disables the queue completely. Only running workers can accept work; if all workers are busy, submissions will either block (default) until a worker becomes available or fail immediately when using `TrySubmit`, `TrySubmitErr`, or `WithNonBlocking(true)`. This is helpful when you need "no backlog" semantics and want to ensure work runs immediately or gets rejected.
+
+```go
+// Create a pool that never queues tasks: they either run immediately or error.
+pool := pond.NewPool(4, pond.WithQueueSize(0))
+
+if _, ok := pool.TrySubmit(func() {
+	// Do some work that must start right away
+}); !ok {
+	// All 4 workers were busy so the task was rejected
+}
+```
+
 ### Resizing pools (v2)
 
 You can dynamically change the maximum number of workers in a pool using the `Resize` method. This is useful when you need to adjust the pool's capacity based on runtime conditions.
