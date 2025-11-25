@@ -13,7 +13,9 @@ import (
 )
 
 const (
-	DefaultQueueSize        = 0
+	// Constant for an unbounded queue
+	Unbounded               = math.MaxInt
+	DefaultQueueSize        = Unbounded
 	DefaultNonBlocking      = false
 	LinkedBufferInitialSize = 1024
 	LinkedBufferMaxCapacity = 100 * 1024
@@ -354,26 +356,32 @@ func (p *pool) trySubmit(task any) error {
 		return ErrPoolStopped
 	}
 
+	queueEnabled := p.queueSize > 0
 	tasksLen := int(p.tasks.Len())
 
-	if p.queueSize > 0 && tasksLen >= p.queueSize {
+	// When queue is enabled, check if it is full
+	if queueEnabled && tasksLen >= p.queueSize {
 		p.mutex.Unlock()
 		return ErrQueueFull
 	}
 
 	if int(p.workerCount.Load()) >= p.maxConcurrency {
-		// Push the task at the back of the queue
+		// When queue is disabled, return an error immediately if max concurrency is reached
+		if !queueEnabled {
+			p.mutex.Unlock()
+			return ErrQueueFull
+		}
+
+		// If queue is enabled, push the task at the back of the queue
 		p.tasks.Write(task)
-
 		p.mutex.Unlock()
-
 		return nil
 	}
 
 	p.workerCount.Add(1)
 	p.workerWaitGroup.Add(1)
 
-	if tasksLen > 0 {
+	if queueEnabled && tasksLen > 0 {
 		// Push the task at the back of the queue
 		p.tasks.Write(task)
 
