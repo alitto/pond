@@ -27,3 +27,11 @@ func WithNonBlocking(nonBlocking bool) Option {
 		p.nonBlocking = nonBlocking
 	}
 }
+
+// WithoutPanicRecovery disables panic interception inside worker goroutines.
+// When this option is enabled, panics inside tasks will propagate just like regular goroutines.
+func WithoutPanicRecovery() Option {
+	return func(p *pool) {
+		p.panicRecovery = false
+	}
+}

@@ -76,6 +76,22 @@ func TestPoolSubmitWithPanic(t *testing.T) {
 	assert.Equal(t, nil, err)
 }
 
+func TestPoolDefaultHasPanicRecoveryEnabled(t *testing.T) {
+	p := NewPool(1)
+	defer p.Stop().Wait()
+
+	internalPool := p.(*pool)
+	assert.True(t, internalPool.panicRecovery)
+}
+
+func TestPoolWithoutPanicRecoveryOption(t *testing.T) {
+	p := NewPool(1, WithoutPanicRecovery())
+	defer p.Stop().Wait()
+
+	internalPool := p.(*pool)
+	assert.Equal(t, false, internalPool.panicRecovery)
+}
+
 func TestPoolSubmitWithErr(t *testing.T) {
 
 	pool := NewPool(100)

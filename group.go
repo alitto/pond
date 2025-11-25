@@ -125,7 +125,7 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 		}
 
 		// Invoke the task
-		output, err := invokeTask[O](task)
+		output, err := invokeTask[O](task, g.pool.panicRecovery)
 
 		g.futureResolver(index, &result[O]{
 			Output: output,

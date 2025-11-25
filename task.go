@@ -9,12 +9,13 @@ import (
 var ErrPanic = errors.New("task panicked")
 
 type wrappedTask[R any, C func(error) | func(R, error)] struct {
-	task     any
-	callback C
+	task          any
+	callback      C
+	panicRecovery bool
 }
 
 func (t wrappedTask[R, C]) Run() error {
-	result, err := invokeTask[R](t.task)
+	result, err := invokeTask[R](t.task, t.panicRecovery)
 
 	switch c := any(t.callback).(type) {
 	case func(error):
@@ -28,26 +29,29 @@ func (t wrappedTask[R, C]) Run() error {
 	return err
 }
 
-func wrapTask[R any, C func(error) | func(R, error)](task any, callback C) func() error {
+func wrapTask[R any, C func(error) | func(R, error)](task any, callback C, panicRecovery bool) func() error {
 	wrapped := &wrappedTask[R, C]{
-		task:     task,
-		callback: callback,
+		task:          task,
+		callback:      callback,
+		panicRecovery: panicRecovery,
 	}
 
 	return wrapped.Run
 }
 
-func invokeTask[R any](task any) (output R, err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			if e, ok := p.(error); ok {
-				err = fmt.Errorf("%w: %w, %s", ErrPanic, e, debug.Stack())
-			} else {
-				err = fmt.Errorf("%w: %v, %s", ErrPanic, p, debug.Stack())
+func invokeTask[R any](task any, panicRecovery bool) (output R, err error) {
+	if panicRecovery {
+		defer func() {
+			if p := recover(); p != nil {
+				if e, ok := p.(error); ok {
+					err = fmt.Errorf("%w: %w, %s", ErrPanic, e, debug.Stack())
+				} else {
+					err = fmt.Errorf("%w: %v, %s", ErrPanic, p, debug.Stack())
+				}
+				return
 			}
-			return
-		}
-	}()
+		}()
+	}
 
 	switch t := any(task).(type) {
 	case func():
