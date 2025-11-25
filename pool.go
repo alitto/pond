@@ -136,6 +136,7 @@ type pool struct {
 	ctx                 context.Context
 	cancel              context.CancelCauseFunc
 	nonBlocking         bool
+	panicRecovery       bool
 	maxConcurrency      int
 	closed              atomic.Bool
 	workerCount         atomic.Int64
@@ -233,7 +234,7 @@ func (p *pool) worker(task any) {
 	var readTaskErr, err error
 	for {
 		if task != nil {
-			_, err = invokeTask[any](task)
+			_, err = invokeTask[any](task, p.panicRecovery)
 
 			p.updateMetrics(err)
 		}
@@ -249,7 +250,7 @@ func (p *pool) worker(task any) {
 func (p *pool) subpoolWorker(task any) func() (output any, err error) {
 	return func() (output any, err error) {
 		if task != nil {
-			output, err = invokeTask[any](task)
+			output, err = invokeTask[any](task, p.panicRecovery)
 
 			p.updateMetrics(err)
 		}
@@ -304,7 +305,7 @@ func (p *pool) wrapTask(task any) (Task, func() error, func(error)) {
 	ctx := p.Context()
 	future, resolve := future.NewFuture(ctx)
 
-	wrappedTask := wrapTask[struct{}, func(error)](task, resolve)
+	wrappedTask := wrapTask[struct{}, func(error)](task, resolve, p.panicRecovery)
 
 	return future, wrappedTask, resolve
 }
@@ -530,6 +531,7 @@ func newPool(maxConcurrency int, parent *pool, options ...Option) *pool {
 	pool := &pool{
 		ctx:            context.Background(),
 		nonBlocking:    DefaultNonBlocking,
+		panicRecovery:  true,
 		maxConcurrency: maxConcurrency,
 		queueSize:      DefaultQueueSize,
 		// Buffer size of 1 to prevent deadlock when read on the submitWaiters channel happens
@@ -543,6 +545,7 @@ func newPool(maxConcurrency int, parent *pool, options ...Option) *pool {
 		pool.ctx = parent.Context()
 		pool.queueSize = parent.queueSize
 		pool.nonBlocking = parent.nonBlocking
+		pool.panicRecovery = parent.panicRecovery
 	}
 
 	for _, option := range options {

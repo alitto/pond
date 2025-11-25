@@ -372,6 +372,16 @@ if err != nil {
 }
 ```
 
+If you prefer to keep the default Go runtime behavior (panics crashing the goroutine), you can disable panic interception when creating the pool:
+
+``` go
+pool := pond.NewPool(10, pond.WithoutPanicRecovery())
+
+pool.Go(func() {
+	panic("this panic will crash the goroutine")
+})
+```
+
 ### Subpools (v2)
 
 Subpools are pools that can have a fraction of the parent pool's maximum number of workers. This is useful when you need to create a pool of workers that can be used for a specific task or group of tasks.
