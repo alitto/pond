@@ -236,10 +236,18 @@ func (p *pool) worker(task any) {
 	defer func() {
 		if !exitedNormally {
 			// In case of abnormal exit (e.g. runtime.Goexit() in the task),
-			// invoke readTask() to make sure the worker wait group is decremented
-			// and a submit waiter is notified to prevent deadlock
-			// (issue #135).
-			p.readTask()
+			// launch a new worker to execute the next task in the queue.
+			p.updateMetrics(fmt.Errorf("worker exited abnormally: %w", err))
+
+			task, err := p.readTask()
+			if err != nil {
+				return
+			}
+
+			if task != nil {
+				p.launchWorker(task)
+				p.notifySubmitWaiter()
+			}
 		}
 	}()
 	for {
