@@ -232,6 +232,16 @@ func (p *pool) DroppedTasks() uint64 {
 
 func (p *pool) worker(task any) {
 	var readTaskErr, err error
+	exitedNormally := false
+	defer func() {
+		if !exitedNormally {
+			// In case of abnormal exit (e.g. runtime.Goexit() in the task),
+			// invoke readTask() to make sure the worker wait group is decremented
+			// and a submit waiter is notified to prevent deadlock
+			// (issue #135).
+			p.readTask()
+		}
+	}()
 	for {
 		if task != nil {
 			_, err = invokeTask[any](task, p.panicRecovery)
@@ -242,6 +252,7 @@ func (p *pool) worker(task any) {
 		task, readTaskErr = p.readTask()
 
 		if readTaskErr != nil {
+			exitedNormally = true
 			return
 		}
 	}

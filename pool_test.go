@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"regexp"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -667,4 +668,29 @@ func TestPoolTrySubmitErr(t *testing.T) {
 	assert.Equal(t, uint64(1), pool.SuccessfulTasks())
 	assert.Equal(t, uint64(1), pool.FailedTasks())
 	assert.Equal(t, uint64(1), pool.DroppedTasks())
+}
+
+// TestStopAndWaitWithGoexit reproduces issue #135: StopAndWait() blocks indefinitely
+// when runtime.Goexit() is called inside a task. This commonly occurs with gomock
+// in unit tests, which uses runtime.Goexit() when expectations fail.
+func TestStopAndWaitWithGoexit(t *testing.T) {
+	pool := NewPool(10)
+
+	pool.SubmitErr(func() error {
+		runtime.Goexit()
+		return nil
+	})
+
+	done := make(chan struct{})
+	go func() {
+		pool.StopAndWait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// StopAndWait completed - bug is fixed
+	case <-time.After(2 * time.Second):
+		t.Fatal("StopAndWait() blocked indefinitely when runtime.Goexit() was called in a task (issue #135)")
+	}
 }
