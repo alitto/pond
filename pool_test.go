@@ -691,6 +691,44 @@ func TestStopAndWaitWithGoexit(t *testing.T) {
 	case <-done:
 		// StopAndWait completed - bug is fixed
 	case <-time.After(2 * time.Second):
-		t.Fatal("StopAndWait() blocked indefinitely when runtime.Goexit() was called in a task (issue #135)")
+		t.Fatal("StopAndWait() blocked indefinitely")
+	}
+}
+
+// TestTaskInvokesGoexitAndRecover
+func TestTaskInvokesGoexitAndPoolRecovers(t *testing.T) {
+	pool := NewPool(1)
+
+	// Submit a task that will invoke runtime.Goexit() and kill the worker
+	taskGoexit := pool.SubmitErr(func() error {
+		runtime.Goexit()
+		return nil
+	})
+
+	// Submit another task that should execute normally after the first task is killed
+	taskNormal := pool.SubmitErr(func() error {
+		return nil
+	})
+
+	done := make(chan struct{})
+	go func() {
+		pool.StopAndWait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// StopAndWait completed
+		assert.Equal(t, ErrPoolStopped, taskGoexit.Wait())
+		assert.Equal(t, nil, taskNormal.Wait())
+
+		assert.Equal(t, int64(0), pool.RunningWorkers())
+		assert.Equal(t, uint64(2), pool.SubmittedTasks())
+		assert.Equal(t, uint64(2), pool.CompletedTasks())
+		assert.Equal(t, uint64(1), pool.SuccessfulTasks())
+		assert.Equal(t, uint64(1), pool.FailedTasks())
+		assert.Equal(t, uint64(0), pool.DroppedTasks())
+	case <-time.After(2 * time.Second):
+		t.Fatal("StopAndWait() blocked indefinitely")
 	}
 }
