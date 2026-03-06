@@ -52,10 +52,15 @@ type basePool interface {
 	SuccessfulTasks() uint64
 
 	// Returns the total number of tasks that have completed (either successfully or with an error).
+	// Tasks accepted by the pool but canceled before execution are excluded.
 	CompletedTasks() uint64
 
 	// Returns the number of tasks that have been dropped because the queue was full.
 	DroppedTasks() uint64
+
+	// Returns the number of tasks accepted by the pool that were canceled
+	// before executing user code due to pool context cancellation.
+	CanceledTasks() uint64
 
 	// Returns the maximum concurrency of the pool.
 	MaxConcurrency() int
@@ -148,6 +153,7 @@ type pool struct {
 	successfulTaskCount atomic.Uint64
 	failedTaskCount     atomic.Uint64
 	droppedTaskCount    atomic.Uint64
+	canceledTaskCount   atomic.Uint64
 }
 
 func (p *pool) Context() context.Context {
@@ -230,6 +236,10 @@ func (p *pool) DroppedTasks() uint64 {
 	return p.droppedTaskCount.Load()
 }
 
+func (p *pool) CanceledTasks() uint64 {
+	return p.canceledTaskCount.Load()
+}
+
 func (p *pool) worker(task any) {
 	var readTaskErr, err error
 	exitedNormally := false
@@ -276,7 +286,26 @@ func (p *pool) subpoolWorker(task any) func() (output any, err error) {
 
 		// Attempt to submit the next task to the parent pool
 		if task, err := p.readTask(); err == nil {
-			p.parent.submit(p.subpoolWorker(task), p.nonBlocking)
+			for {
+				submitErr := p.parent.submit(p.subpoolWorker(task), p.nonBlocking)
+				if submitErr == nil {
+					break
+				}
+
+				// Wrap the error with the context canceled error to reflect that the task was canceled.
+				if errors.Is(submitErr, ErrPoolStopped) {
+					err = errors.Join(ErrContextCanceled, submitErr)
+					p.updateMetrics(err)
+					p.parent.updateMetrics(err)
+				}
+
+				// If the parent pool is stopped/canceled it won't accept submissions.
+				// Keep draining the subpool queue so workers can exit cleanly.
+				task, err = p.readTask()
+				if err != nil {
+					break
+				}
+			}
 		}
 
 		return
@@ -324,7 +353,7 @@ func (p *pool) wrapTask(task any) (Task, func() error, func(error)) {
 	ctx := p.Context()
 	future, resolve := future.NewFuture(ctx)
 
-	wrappedTask := wrapTask[struct{}, func(error)](task, resolve, p.panicRecovery)
+	wrappedTask := wrapTask[struct{}, func(error)](task, resolve, ctx, p.panicRecovery)
 
 	return future, wrappedTask, resolve
 }
@@ -433,19 +462,6 @@ func (p *pool) launchWorker(task any) {
 func (p *pool) readTask() (task any, err error) {
 	p.mutex.Lock()
 
-	// Check if the pool context has been cancelled
-	select {
-	case <-p.ctx.Done():
-		// Context cancelled, worker will exit
-		p.workerCount.Add(-1)
-		p.workerWaitGroup.Done()
-		p.mutex.Unlock()
-
-		err = p.ctx.Err()
-		return
-	default:
-	}
-
 	if p.tasks.Len() == 0 {
 		// No more tasks in the queue, worker will exit
 		p.workerCount.Add(-1)
@@ -490,7 +506,11 @@ func (p *pool) notifySubmitWaiter() {
 
 func (p *pool) updateMetrics(err error) {
 	if err != nil {
-		p.failedTaskCount.Add(1)
+		if errors.Is(err, ErrContextCanceled) {
+			p.canceledTaskCount.Add(1)
+		} else {
+			p.failedTaskCount.Add(1)
+		}
 	} else {
 		p.successfulTaskCount.Add(1)
 	}

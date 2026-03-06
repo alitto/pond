@@ -180,6 +180,50 @@ func TestTaskGroupWaitWithContextCanceledAndOngoingTasks(t *testing.T) {
 	assert.Equal(t, int32(1), executedCount.Load())
 }
 
+func TestTaskGroupWaitShouldNotDeadlockWhenPoolContextCanceledWithQueuedTasks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool := NewPool(1, WithContext(ctx))
+	group := pool.NewGroup()
+
+	firstTaskStarted := make(chan struct{})
+	releaseFirstTask := make(chan struct{})
+
+	group.Submit(func() {
+		close(firstTaskStarted)
+		<-releaseFirstTask
+	})
+
+	// This task stays queued while the only worker is blocked in the first task.
+	group.Submit(func() {})
+
+	<-firstTaskStarted
+	cancel()
+	close(releaseFirstTask)
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- group.Wait()
+	}()
+
+	select {
+	case err := <-waitDone:
+		assert.Equal(t, context.Canceled, err)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("group.Wait blocked after pool context cancellation with queued tasks")
+	}
+
+	assert.Equal(t, uint64(2), pool.SubmittedTasks())
+	assert.Equal(t, uint64(1), pool.CompletedTasks())
+	assert.Equal(t, uint64(1), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+	assert.Equal(t, uint64(1), pool.CanceledTasks())
+	assert.Equal(t, uint64(0), pool.DroppedTasks())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+	assert.Equal(t, int64(0), pool.RunningWorkers())
+}
+
 func TestTaskGroupWithStoppedPool(t *testing.T) {
 
 	pool := NewPool(100)
@@ -387,7 +431,8 @@ func TestTaskGroupMetricsWithCancelledContext(t *testing.T) {
 	assert.Equal(t, err, context.Canceled)
 	assert.Equal(t, uint64(10), pool.SubmittedTasks())
 	assert.Equal(t, uint64(5), pool.SuccessfulTasks())
-	assert.Equal(t, uint64(5), pool.FailedTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+	assert.Equal(t, uint64(5), pool.CanceledTasks())
 }
 
 func TestTaskGroupWaitingTasks(t *testing.T) {
@@ -462,5 +507,6 @@ func TestTaskGroupContext(t *testing.T) {
 	assert.Equal(t, struct{}{}, <-group.Context().Done())
 	assert.Equal(t, uint64(3), pool.SubmittedTasks())
 	assert.Equal(t, uint64(0), pool.SuccessfulTasks())
-	assert.Equal(t, uint64(3), pool.FailedTasks())
+	assert.Equal(t, uint64(2), pool.FailedTasks())
+	assert.Equal(t, uint64(1), pool.CanceledTasks())
 }
