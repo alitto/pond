@@ -317,6 +317,8 @@ customCtx, cancel := context.WithCancel(context.Background())
 pool := pond.NewPool(10, pond.WithContext(customCtx))
 ``` 
 
+When a pool-level context is canceled, workers stop accepting new work and any queued tasks are drained so the pool can shut down cleanly without deadlocking. Drained tasks are not executed and resolve with a cancellation error.
+
 ### Stopping a pool
 
 You can stop a pool using the `Stop` method. This will stop all workers and prevent new tasks from being submitted. You can also wait for all submitted tasks by calling the `Wait` method.
@@ -525,8 +527,9 @@ Each worker pool instance exposes useful metrics that can be queried through the
 - `pool.SubmittedTasks() uint64`: Total number of tasks submitted since the pool was created and before it was stopped. This includes tasks that were dropped because the queue was full
 - `pool.WaitingTasks() uint64`: Current number of tasks in the queue that are waiting to be executed
 - `pool.SuccessfulTasks() uint64`: Total number of tasks that have successfully completed their execution since the pool was created
-- `pool.FailedTasks() uint64`: Total number of tasks that completed with panic since the pool was created
-- `pool.CompletedTasks() uint64`: Total number of tasks that have completed their execution either successfully or with panic since the pool was created
+- `pool.FailedTasks() uint64`: Total number of tasks that completed with a non-cancellation error (including panics) since the pool was created
+- `pool.CanceledTasks() uint64`: Total number of tasks accepted by the pool that were canceled before executing user code due to context cancellation
+- `pool.CompletedTasks() uint64`: Total number of tasks that have completed their execution either successfully or with a non-cancellation error since the pool was created
 - `pool.DroppedTasks() uint64`: Total number of tasks that were dropped because the queue was full since the pool was created
 
 In our [Prometheus example](./examples/prometheus/main.go) we showcase how to configure collectors for these metrics and expose them to Prometheus.

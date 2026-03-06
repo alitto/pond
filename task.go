@@ -1,6 +1,7 @@
 package pond
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -8,14 +9,28 @@ import (
 
 var ErrPanic = errors.New("task panicked")
 
+var ErrContextCanceled = errors.New("context canceled")
+
 type wrappedTask[R any, C func(error) | func(R, error)] struct {
 	task          any
 	callback      C
+	ctx           context.Context
 	panicRecovery bool
 }
 
 func (t wrappedTask[R, C]) Run() error {
-	result, err := invokeTask[R](t.task, t.panicRecovery)
+	var result R
+	var err error
+
+	if t.ctx != nil {
+		if ctxErr := t.ctx.Err(); ctxErr != nil {
+			err = errors.Join(ErrContextCanceled, ctxErr)
+		}
+	}
+
+	if err == nil {
+		result, err = invokeTask[R](t.task, t.panicRecovery)
+	}
 
 	switch c := any(t.callback).(type) {
 	case func(error):
@@ -29,10 +44,11 @@ func (t wrappedTask[R, C]) Run() error {
 	return err
 }
 
-func wrapTask[R any, C func(error) | func(R, error)](task any, callback C, panicRecovery bool) func() error {
+func wrapTask[R any, C func(error) | func(R, error)](task any, callback C, ctx context.Context, panicRecovery bool) func() error {
 	wrapped := &wrappedTask[R, C]{
 		task:          task,
 		callback:      callback,
+		ctx:           ctx,
 		panicRecovery: panicRecovery,
 	}
 

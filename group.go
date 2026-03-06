@@ -118,9 +118,13 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 
 		// Check if the context has been cancelled to prevent running tasks that are not needed
 		if err := g.future.Context().Err(); err != nil {
+			// Wrap the error with the context canceled error to reflect that the task was canceled.
+			err = errors.Join(ErrContextCanceled, err)
+
 			g.futureResolver(index, &result[O]{
 				Err: err,
 			}, err)
+
 			return err
 		}
 

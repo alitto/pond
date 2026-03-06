@@ -1,6 +1,7 @@
 package pond
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -291,4 +292,52 @@ func TestResultInterfaceCompatibility(t *testing.T) {
 	result, err := processResult(task)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, 42, result)
+}
+
+func TestResultPoolSubmitContextCanceled(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool := NewResultPool[int](1, WithContext(ctx))
+	defer pool.StopAndWait()
+
+	// Task executed before the context is canceled
+	task1 := pool.Submit(func() int {
+		return 111
+	})
+
+	// Task that cancels the context while executing
+	task2 := pool.Submit(func() int {
+		cancel()
+		return 222
+	})
+
+	// Task executed after the context is canceled
+	task3 := pool.Submit(func() int {
+		return 333
+	})
+
+	result1, err := task1.Wait()
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 111, result1)
+
+	result2, err := task2.Wait()
+	assert.True(t, errors.Is(err, context.Canceled))
+	assert.Equal(t, 0, result2)
+
+	result3, err := task3.Wait()
+	assert.True(t, errors.Is(err, context.Canceled))
+	assert.Equal(t, 0, result3)
+
+	pool.StopAndWait()
+
+	assert.True(t, errors.Is(err, ctx.Err()))
+
+	assert.Equal(t, uint64(3), pool.SubmittedTasks())
+	assert.Equal(t, uint64(2), pool.CompletedTasks())
+	assert.Equal(t, uint64(2), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+	assert.Equal(t, uint64(1), pool.CanceledTasks())
+	assert.Equal(t, uint64(0), pool.DroppedTasks())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+	assert.Equal(t, int64(0), pool.RunningWorkers())
 }

@@ -75,7 +75,8 @@ func (p *resultPool[R]) TrySubmitErr(task func() (R, error)) (ResultTask[R], boo
 }
 
 func (p *resultPool[R]) submit(task any, nonBlocking bool) (ResultTask[R], bool) {
-	future, resolve := future.NewValueFuture[R](p.Context())
+	ctx := p.Context()
+	future, resolve := future.NewValueFuture[R](ctx)
 
 	if p.Stopped() {
 		var zero R
@@ -83,7 +84,7 @@ func (p *resultPool[R]) submit(task any, nonBlocking bool) (ResultTask[R], bool)
 		return future, false
 	}
 
-	wrapped := wrapTask[R, func(R, error)](task, resolve, p.pool.panicRecovery)
+	wrapped := wrapTask[R, func(R, error)](task, resolve, ctx, p.pool.panicRecovery)
 
 	if err := p.pool.submit(wrapped, nonBlocking); err != nil {
 		var zero R

@@ -138,6 +138,52 @@ func TestPoolWithContextCanceled(t *testing.T) {
 	assert.Equal(t, int64(0), pool.RunningWorkers())
 }
 
+func TestPoolStopAndWaitShouldNotDeadlockWhenContextCanceledWithQueuedTasks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool := NewPool(1, WithContext(ctx))
+
+	firstTaskStarted := make(chan struct{})
+	releaseFirstTask := make(chan struct{})
+
+	firstTask := pool.Submit(func() {
+		close(firstTaskStarted)
+		<-releaseFirstTask
+	})
+
+	// This task stays queued while the only worker is blocked in the first task.
+	secondTask := pool.Submit(func() {})
+
+	<-firstTaskStarted
+	cancel()
+	close(releaseFirstTask)
+
+	stopDone := make(chan struct{})
+	go func() {
+		pool.StopAndWait()
+		close(stopDone)
+	}()
+
+	select {
+	case <-stopDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("pool.StopAndWait blocked after context cancellation with queued tasks")
+	}
+
+	assert.Equal(t, context.Canceled, firstTask.Wait())
+	assert.Equal(t, context.Canceled, secondTask.Wait())
+
+	assert.Equal(t, uint64(2), pool.SubmittedTasks())
+	assert.Equal(t, uint64(1), pool.CompletedTasks())
+	assert.Equal(t, uint64(1), pool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+	assert.Equal(t, uint64(1), pool.CanceledTasks())
+	assert.Equal(t, uint64(0), pool.DroppedTasks())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+	assert.Equal(t, int64(0), pool.RunningWorkers())
+}
+
 func TestPoolMetrics(t *testing.T) {
 
 	pool := NewPool(100)
@@ -367,6 +413,31 @@ func TestPoolResize(t *testing.T) {
 
 	assert.Equal(t, 1, pool.MaxConcurrency())
 
+	waitForMetrics := func(waitingTasks uint64, runningWorkers int64) {
+		t.Helper()
+
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			currentWaitingTasks := pool.WaitingTasks()
+			currentRunningWorkers := pool.RunningWorkers()
+			if currentWaitingTasks == waitingTasks && currentRunningWorkers == runningWorkers {
+				return
+			}
+
+			if time.Now().After(deadline) {
+				t.Fatalf(
+					"timed out waiting for metrics: expected waiting=%d running=%d, got waiting=%d running=%d",
+					waitingTasks,
+					runningWorkers,
+					currentWaitingTasks,
+					currentRunningWorkers,
+				)
+			}
+
+			time.Sleep(1 * time.Millisecond)
+		}
+	}
+
 	taskStarted := make(chan struct{}, 10)
 	taskWait := make(chan struct{}, 10)
 
@@ -384,9 +455,7 @@ func TestPoolResize(t *testing.T) {
 	}
 
 	// Verify only 1 task is running and 9 are waiting
-	time.Sleep(10 * time.Millisecond)
-	assert.Equal(t, uint64(9), pool.WaitingTasks())
-	assert.Equal(t, int64(1), pool.RunningWorkers())
+	waitForMetrics(uint64(9), int64(1))
 
 	// Increase max concurrency to 3
 	pool.Resize(3)
@@ -398,9 +467,7 @@ func TestPoolResize(t *testing.T) {
 	}
 
 	// Verify 3 tasks are running and 7 are waiting
-	time.Sleep(10 * time.Millisecond)
-	assert.Equal(t, uint64(7), pool.WaitingTasks())
-	assert.Equal(t, int64(3), pool.RunningWorkers())
+	waitForMetrics(uint64(7), int64(3))
 
 	// Decrease max concurrency to 2
 	pool.Resize(2)
@@ -417,9 +484,7 @@ func TestPoolResize(t *testing.T) {
 	}
 
 	// Ensure 2 tasks are running and 5 are waiting
-	time.Sleep(20 * time.Millisecond)
-	assert.Equal(t, uint64(5), pool.WaitingTasks())
-	assert.Equal(t, int64(2), pool.RunningWorkers())
+	waitForMetrics(uint64(5), int64(2))
 
 	close(taskWait)
 

@@ -192,6 +192,64 @@ func TestSubpoolStoppedAfterCancel(t *testing.T) {
 	assert.Equal(t, ErrPoolStopped, err)
 }
 
+func TestSubpoolStopAndWaitShouldNotDeadlockWhenContextCanceledWithQueuedTasks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	parentPool := NewPool(1, WithContext(ctx))
+	subpool := parentPool.NewSubpool(1)
+
+	firstTaskStarted := make(chan struct{})
+	releaseFirstTask := make(chan struct{})
+
+	firstTask := subpool.Submit(func() {
+		close(firstTaskStarted)
+		<-releaseFirstTask
+	})
+
+	// This task stays queued in the subpool while the only worker is blocked.
+	secondTask := subpool.Submit(func() {})
+
+	<-firstTaskStarted
+	cancel()
+	close(releaseFirstTask)
+
+	stopDone := make(chan struct{})
+	go func() {
+		subpool.StopAndWait()
+		close(stopDone)
+	}()
+
+	select {
+	case <-stopDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("subpool.StopAndWait blocked after context cancellation with queued tasks")
+	}
+
+	assert.Equal(t, context.Canceled, firstTask.Wait())
+	assert.Equal(t, context.Canceled, secondTask.Wait())
+
+	parentPool.StopAndWait()
+
+	assert.Equal(t, uint64(2), subpool.SubmittedTasks())
+	assert.Equal(t, uint64(1), subpool.CompletedTasks())
+	assert.Equal(t, uint64(1), subpool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), subpool.FailedTasks())
+	assert.Equal(t, uint64(1), subpool.CanceledTasks())
+	assert.Equal(t, uint64(0), subpool.DroppedTasks())
+	assert.Equal(t, uint64(0), subpool.WaitingTasks())
+	assert.Equal(t, int64(0), subpool.RunningWorkers())
+
+	assert.Equal(t, uint64(2), parentPool.SubmittedTasks())
+	assert.Equal(t, uint64(1), parentPool.CompletedTasks())
+	assert.Equal(t, uint64(1), parentPool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), parentPool.FailedTasks())
+	assert.Equal(t, uint64(1), parentPool.CanceledTasks())
+	assert.Equal(t, uint64(1), parentPool.DroppedTasks())
+	assert.Equal(t, uint64(0), parentPool.WaitingTasks())
+	assert.Equal(t, int64(0), parentPool.RunningWorkers())
+}
+
 func TestSubpoolWithDifferentLimits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := NewPool(7, WithContext(ctx))
