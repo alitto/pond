@@ -8,7 +8,7 @@ import (
 
 // ResultPool is a pool that can be used to submit tasks that return a result.
 type ResultPool[R any] interface {
-	basePool
+	BasePool
 
 	// Submits a task to the pool and returns a future that can be used to wait for the task to complete and get the result.
 	// The pool will not accept new tasks after it has been stopped.
