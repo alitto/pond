@@ -34,8 +34,8 @@ var (
 	}()
 )
 
-// basePool is the base interface for all pool types.
-type basePool interface {
+// BasePool defines methods common to all pool types.
+type BasePool interface {
 	// Returns the number of worker goroutines that are currently active (executing a task) in the pool.
 	RunningWorkers() int64
 
@@ -94,7 +94,7 @@ type basePool interface {
 
 // Represents a pool of goroutines that can execute tasks concurrently.
 type Pool interface {
-	basePool
+	BasePool
 
 	// Submits a task to the pool without waiting for it to complete.
 	// The pool will not accept new tasks after it has been stopped.
