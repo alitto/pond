@@ -41,7 +41,7 @@ jobs:
       - name: Test
         run: make coverage
 
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         with:
           files: coverage.out
           fail_ci_if_error: true
