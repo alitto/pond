@@ -491,6 +491,141 @@ func TestPoolResize(t *testing.T) {
 	pool.Stop().Wait()
 }
 
+func TestPoolResizeBeforeWorkersRetire(t *testing.T) {
+	for _, subpool := range []bool{false, true} {
+		for _, test := range []struct {
+			name          string
+			retired       int
+			maxWorkers    int
+			running       int64
+			startedQueued int
+		}{
+			{name: "still_above_limit", maxWorkers: 3, running: 5},
+			{name: "partially_retired", retired: 2, maxWorkers: 4, running: 4, startedQueued: 1},
+			{name: "grow_above_original_limit", maxWorkers: 7, running: 7, startedQueued: 2},
+		} {
+			name := test.name
+			if subpool {
+				name = "subpool/" + name
+			}
+			t.Run(name, func(t *testing.T) {
+				var parent, pool Pool
+				if subpool {
+					parent = NewPool(10)
+					pool = parent.NewSubpool(5)
+				} else {
+					pool = NewPool(5)
+				}
+
+				started := make(chan struct{}, 5)
+				queuedStarted := make(chan struct{}, 2)
+				releaseQueued := make(chan struct{})
+				releases := make([]chan struct{}, 5)
+				for i := range releases {
+					releases[i] = make(chan struct{})
+				}
+				released := 0
+				t.Cleanup(func() {
+					for _, release := range releases[released:] {
+						close(release)
+					}
+					close(releaseQueued)
+					pool.StopAndWait()
+					if parent != nil {
+						parent.StopAndWait()
+					}
+				})
+
+				for _, release := range releases {
+					release := release
+					pool.Submit(func() {
+						started <- struct{}{}
+						<-release
+					})
+				}
+				for range releases {
+					select {
+					case <-started:
+					case <-time.After(2 * time.Second):
+						t.Fatal("timed out waiting for initial workers")
+					}
+				}
+				for i := 0; i < 2; i++ {
+					pool.Submit(func() {
+						queuedStarted <- struct{}{}
+						<-releaseQueued
+					})
+				}
+
+				pool.Resize(1)
+				for _, release := range releases[:test.retired] {
+					close(release)
+					released++
+				}
+				deadline := time.Now().Add(2 * time.Second)
+				for pool.RunningWorkers() != int64(5-test.retired) {
+					if time.Now().After(deadline) {
+						t.Fatal("timed out waiting for workers to retire")
+					}
+					time.Sleep(time.Millisecond)
+				}
+
+				pool.Resize(test.maxWorkers)
+				assert.Equal(t, test.maxWorkers, pool.MaxConcurrency())
+				assert.Equal(t, test.running, pool.RunningWorkers())
+				for i := 0; i < test.startedQueued; i++ {
+					select {
+					case <-queuedStarted:
+					case <-time.After(2 * time.Second):
+						t.Fatal("timed out waiting for queued tasks")
+					}
+				}
+				assert.Equal(t, test.startedQueued, 2-int(pool.WaitingTasks()))
+				if parent != nil {
+					assert.Equal(t, uint64(5+2*test.startedQueued), parent.SubmittedTasks())
+				}
+			})
+		}
+	}
+}
+
+func TestSubpoolResizeBeforeWorkersRetireWithFullParent(t *testing.T) {
+	parent := NewPool(5, WithQueueSize(0))
+	pool := parent.NewSubpool(5, WithQueueSize(2))
+	started := make(chan struct{}, 5)
+	release := make(chan struct{})
+	resized := make(chan struct{})
+	t.Cleanup(func() {
+		close(release)
+		<-resized
+		pool.StopAndWait()
+		parent.StopAndWait()
+	})
+
+	for i := 0; i < 5; i++ {
+		pool.Submit(func() {
+			started <- struct{}{}
+			<-release
+		})
+	}
+	for i := 0; i < 5; i++ {
+		<-started
+	}
+	pool.Submit(func() {})
+	pool.Submit(func() {})
+	pool.Resize(1)
+	go func() {
+		pool.Resize(3)
+		close(resized)
+	}()
+
+	select {
+	case <-resized:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resize blocked on the full parent while existing workers exceed the new limit")
+	}
+}
+
 func TestPoolResizeWithZeroMaxConcurrency(t *testing.T) {
 	pool := NewPool(10)
 
