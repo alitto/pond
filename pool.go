@@ -182,8 +182,11 @@ func (p *pool) Resize(maxConcurrency int) {
 
 	p.mutex.Lock()
 
-	// Calculate the number of new workers to launch to reach the new max concurrency or the number of tasks in the queue, whichever is smaller
-	newWorkers := int(math.Min(float64(maxConcurrency-p.maxConcurrency), float64(p.tasks.Len())))
+	// Workers from an earlier limit can still be running after a shrink.
+	newWorkers := maxConcurrency - int(p.workerCount.Load())
+	if queuedTasks := int(p.tasks.Len()); newWorkers > queuedTasks {
+		newWorkers = queuedTasks
+	}
 
 	p.maxConcurrency = maxConcurrency
 
