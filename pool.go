@@ -220,6 +220,9 @@ func (p *pool) SubmittedTasks() uint64 {
 }
 
 func (p *pool) WaitingTasks() uint64 {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
 	return p.tasks.Len()
 }
 
