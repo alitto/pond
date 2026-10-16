@@ -932,3 +932,29 @@ func TestTaskInvokesGoexitAndPoolRecovers(t *testing.T) {
 		t.Fatal("StopAndWait() blocked indefinitely")
 	}
 }
+
+func TestPoolWaitingTasksUnderLoad(t *testing.T) {
+	const queueSize = 64
+	pool := NewPool(4, WithQueueSize(queueSize))
+	defer pool.StopAndWait()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100000; i++ {
+			pool.Go(func() {})
+		}
+	}()
+
+	for {
+		if waiting := pool.WaitingTasks(); waiting > queueSize {
+			<-done
+			t.Fatalf("waiting task count %d exceeds queue size %d", waiting, queueSize)
+		}
+		select {
+		case <-done:
+			return
+		default:
+		}
+	}
+}
