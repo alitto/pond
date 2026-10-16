@@ -281,11 +281,23 @@ func (p *pool) worker(task any) {
 
 func (p *pool) subpoolWorker(task any) func() (output any, err error) {
 	return func() (output any, err error) {
+		exitedNormally := false
+		defer func() {
+			if !exitedNormally {
+				p.updateMetrics(fmt.Errorf("worker exited abnormally: %w", err))
+				if nextTask, readErr := p.readTask(); readErr == nil {
+					p.launchWorker(nextTask)
+				}
+			}
+		}()
+
 		if task != nil {
 			output, err = invokeTask[any](task, p.panicRecovery)
 
 			p.updateMetrics(err)
 		}
+
+		exitedNormally = true
 
 		// Attempt to submit the next task to the parent pool
 		if task, err := p.readTask(); err == nil {

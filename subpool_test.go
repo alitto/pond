@@ -3,6 +3,7 @@ package pond
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -466,4 +467,55 @@ func TestSubpoolResize(t *testing.T) {
 	close(taskWait)
 
 	pool.Stop().Wait()
+}
+
+func TestSubpoolRecoversAfterGoexit(t *testing.T) {
+	for _, nested := range []bool{false, true} {
+		name := "direct"
+		if nested {
+			name = "nested"
+		}
+		t.Run(name, func(t *testing.T) {
+			parent := NewPool(1)
+			defer parent.StopAndWait()
+			subpool := parent.NewSubpool(1)
+			var intermediate Pool
+			if nested {
+				intermediate = subpool
+				subpool = intermediate.NewSubpool(1)
+			}
+
+			started := make(chan struct{})
+			release := make(chan struct{})
+			aborted := subpool.Submit(func() {
+				close(started)
+				<-release
+				runtime.Goexit()
+			})
+			<-started
+			next := subpool.Submit(func() {})
+			close(release)
+
+			done := make(chan struct{})
+			go func() {
+				subpool.StopAndWait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("subpool did not recover after runtime.Goexit")
+			}
+
+			assert.Equal(t, ErrPoolStopped, aborted.Wait())
+			assert.Equal(t, nil, next.Wait())
+			assert.Equal(t, int64(0), subpool.RunningWorkers())
+			assert.Equal(t, uint64(0), subpool.WaitingTasks())
+			assert.Equal(t, uint64(1), subpool.FailedTasks())
+			assert.Equal(t, uint64(1), subpool.SuccessfulTasks())
+			if intermediate != nil {
+				intermediate.StopAndWait()
+			}
+		})
+	}
 }
