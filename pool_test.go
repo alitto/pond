@@ -184,6 +184,43 @@ func TestPoolStopAndWaitShouldNotDeadlockWhenContextCanceledWithQueuedTasks(t *t
 	assert.Equal(t, int64(0), pool.RunningWorkers())
 }
 
+func TestPoolGoShouldNotRunQueuedTasksWhenContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool := NewPool(1, WithContext(ctx))
+
+	firstTaskStarted := make(chan struct{})
+	releaseFirstTask := make(chan struct{})
+
+	err := pool.Go(func() {
+		close(firstTaskStarted)
+		<-releaseFirstTask
+	})
+	assert.Equal(t, nil, err)
+
+	// This task stays queued while the only worker is blocked in the first task.
+	var queuedTaskExecuted atomic.Bool
+	err = pool.Go(func() {
+		queuedTaskExecuted.Store(true)
+	})
+	assert.Equal(t, nil, err)
+
+	<-firstTaskStarted
+	cancel()
+	close(releaseFirstTask)
+
+	pool.StopAndWait()
+
+	assert.Equal(t, false, queuedTaskExecuted.Load())
+
+	assert.Equal(t, uint64(2), pool.SubmittedTasks())
+	assert.Equal(t, uint64(1), pool.CompletedTasks())
+	assert.Equal(t, uint64(1), pool.CanceledTasks())
+	assert.Equal(t, uint64(0), pool.WaitingTasks())
+	assert.Equal(t, int64(0), pool.RunningWorkers())
+}
+
 func TestPoolMetrics(t *testing.T) {
 
 	pool := NewPool(100)
