@@ -331,7 +331,8 @@ func (p *pool) subpoolWorker(task any) func() (output any, err error) {
 }
 
 func (p *pool) Go(task func()) error {
-	return p.submit(task, p.nonBlocking)
+	// Wrap the task so it is skipped if the pool context is canceled while it is queued
+	return p.submit(wrapTask[struct{}, func(error)](task, func(error) {}, p.ctx, p.panicRecovery), p.nonBlocking)
 }
 
 func (p *pool) Submit(task func()) Task {
