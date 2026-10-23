@@ -519,3 +519,175 @@ func TestSubpoolRecoversAfterGoexit(t *testing.T) {
 		})
 	}
 }
+
+func TestSubpoolTrySubmitWaitsForParentQueueCapacity(t *testing.T) {
+	parent := NewPool(1, WithQueueSize(1))
+	parentTaskStarted := make(chan struct{})
+	releaseParentTask := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseParentTask) }) }
+	defer func() {
+		release()
+		parent.StopAndWait()
+	}()
+
+	if err := parent.Go(func() {
+		close(parentTaskStarted)
+		<-releaseParentTask
+	}); err != nil {
+		t.Fatalf("start parent task: %v", err)
+	}
+	<-parentTaskStarted
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+
+	subpool := parent.NewSubpool(1, WithQueueSize(1), WithNonBlocking(true))
+	task, accepted := subpool.TrySubmit(func() {})
+	if !accepted {
+		t.Fatal("TrySubmit rejected work despite available subpool capacity")
+	}
+	release()
+
+	select {
+	case <-task.Done():
+		if err := task.Wait(); err != nil {
+			t.Fatalf("task error = %v, want nil", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("subpool task did not run after the parent queue freed capacity")
+	}
+
+	subpool.StopAndWait()
+	if got := subpool.RunningWorkers(); got != 0 {
+		t.Fatalf("subpool running workers = %d, want 0", got)
+	}
+}
+
+func TestSubpoolPendingParentScheduleCancelsWithParentContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	parent := NewPool(1, WithQueueSize(1), WithContext(ctx))
+	parentTaskStarted := make(chan struct{})
+	releaseParentTask := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseParentTask) }) }
+	defer func() {
+		release()
+		cancel()
+		parent.StopAndWait()
+	}()
+
+	if err := parent.Go(func() {
+		close(parentTaskStarted)
+		<-releaseParentTask
+	}); err != nil {
+		t.Fatalf("start parent task: %v", err)
+	}
+	<-parentTaskStarted
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+
+	subpool := parent.NewSubpool(1, WithQueueSize(1), WithNonBlocking(true))
+	task, accepted := subpool.TrySubmit(func() {})
+	if !accepted {
+		t.Fatal("TrySubmit rejected work despite available subpool capacity")
+	}
+	cancel()
+
+	select {
+	case <-task.Done():
+		if err := task.Wait(); !errors.Is(err, context.Canceled) {
+			t.Fatalf("task error = %v, want context cancellation", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("pending subpool task was not canceled with its parent")
+	}
+
+	release()
+	subpool.StopAndWait()
+}
+
+func TestSubpoolStopCancelsPendingParentSchedule(t *testing.T) {
+	parent := NewPool(1, WithQueueSize(1))
+	parentTaskStarted := make(chan struct{})
+	releaseParentTask := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseParentTask) }) }
+	defer func() {
+		release()
+		parent.StopAndWait()
+	}()
+
+	if err := parent.Go(func() {
+		close(parentTaskStarted)
+		<-releaseParentTask
+	}); err != nil {
+		t.Fatalf("start parent task: %v", err)
+	}
+	<-parentTaskStarted
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+
+	subpool := parent.NewSubpool(1, WithQueueSize(1), WithNonBlocking(true))
+	task, accepted := subpool.TrySubmit(func() {})
+	if !accepted {
+		t.Fatal("TrySubmit rejected work despite available subpool capacity")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		subpool.StopAndWait()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("subpool stop waited forever for a full parent queue")
+	}
+	if err := task.Wait(); !errors.Is(err, ErrPoolStopped) {
+		t.Fatalf("task error = %v, want %v", err, ErrPoolStopped)
+	}
+}
+
+func TestSubpoolQueuedTaskRunsWhenParentQueueFillsBeforeHandoff(t *testing.T) {
+	parent := NewPool(1, WithQueueSize(1))
+	taskStarted := make(chan struct{})
+	releaseTask := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseTask) }) }
+	defer func() {
+		release()
+		parent.StopAndWait()
+	}()
+
+	subpool := parent.NewSubpool(1, WithQueueSize(1), WithNonBlocking(true))
+	first := subpool.Submit(func() {
+		close(taskStarted)
+		<-releaseTask
+	})
+	<-taskStarted
+	queued := subpool.Submit(func() {})
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+	release()
+
+	select {
+	case <-queued.Done():
+		if err := queued.Wait(); err != nil {
+			t.Fatalf("queued task error = %v, want nil", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("queued subpool task did not run after the parent queue freed capacity")
+	}
+
+	if err := first.Wait(); err != nil {
+		t.Fatalf("first task error = %v, want nil", err)
+	}
+	subpool.StopAndWait()
+	if got := subpool.RunningWorkers(); got != 0 {
+		t.Fatalf("subpool running workers = %d, want 0", got)
+	}
+}
