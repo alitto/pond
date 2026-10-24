@@ -67,6 +67,16 @@ func (f *CompositeFuture[V]) Done(count int) <-chan struct{} {
 		ch:    ch,
 	})
 
+	go func() {
+		select {
+		case <-f.ctx.Done():
+			f.mutex.Lock()
+			defer f.mutex.Unlock()
+			f.notifyListeners()
+		case <-ch:
+		}
+	}()
+
 	return ch
 }
 
