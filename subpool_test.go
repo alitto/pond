@@ -519,3 +519,272 @@ func TestSubpoolRecoversAfterGoexit(t *testing.T) {
 		})
 	}
 }
+
+func TestSubpoolTrySubmitWaitsForParentQueueCapacity(t *testing.T) {
+	parent := NewPool(1, WithQueueSize(1))
+	parentTaskStarted := make(chan struct{})
+	releaseParentTask := make(chan struct{})
+	childTaskStarted := make(chan struct{})
+	releaseChildTask := make(chan struct{})
+	var releaseParentOnce, releaseChildOnce sync.Once
+	releaseParent := func() { releaseParentOnce.Do(func() { close(releaseParentTask) }) }
+	releaseChild := func() { releaseChildOnce.Do(func() { close(releaseChildTask) }) }
+	defer func() {
+		releaseParent()
+		releaseChild()
+		parent.StopAndWait()
+	}()
+
+	if err := parent.Go(func() {
+		close(parentTaskStarted)
+		<-releaseParentTask
+	}); err != nil {
+		t.Fatalf("start parent task: %v", err)
+	}
+	<-parentTaskStarted
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+
+	subpool := parent.NewSubpool(1, WithQueueSize(1), WithNonBlocking(true))
+	first, accepted := subpool.TrySubmit(func() {
+		close(childTaskStarted)
+		<-releaseChildTask
+	})
+	if !accepted {
+		t.Fatal("TrySubmit rejected work despite available subpool capacity")
+	}
+	second := subpool.Submit(func() {})
+	releaseParent()
+	select {
+	case <-childTaskStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subpool task did not run after the parent queue freed capacity")
+	}
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("refill parent queue before subpool handoff: %v", err)
+	}
+	releaseChild()
+
+	for _, task := range []Task{first, second} {
+		select {
+		case <-task.Done():
+			if err := task.Wait(); err != nil {
+				t.Fatalf("subpool task error = %v, want nil", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("subpool task did not run after the parent queue freed capacity")
+		}
+	}
+
+	subpool.StopAndWait()
+	assert.Equal(t, uint64(2), subpool.SubmittedTasks())
+	assert.Equal(t, uint64(2), subpool.CompletedTasks())
+	assert.Equal(t, uint64(2), subpool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), subpool.FailedTasks())
+	assert.Equal(t, uint64(0), subpool.DroppedTasks())
+	assert.Equal(t, uint64(0), subpool.WaitingTasks())
+	assert.Equal(t, int64(0), subpool.RunningWorkers())
+
+	parent.StopAndWait()
+	assert.Equal(t, uint64(5), parent.SubmittedTasks())
+	assert.Equal(t, uint64(5), parent.CompletedTasks())
+	assert.Equal(t, uint64(5), parent.SuccessfulTasks())
+	assert.Equal(t, uint64(0), parent.FailedTasks())
+	assert.Equal(t, uint64(0), parent.DroppedTasks())
+	assert.Equal(t, uint64(0), parent.WaitingTasks())
+	assert.Equal(t, int64(0), parent.RunningWorkers())
+}
+
+func TestSubpoolPendingParentScheduleCancelsWithParentContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	parent := NewPool(1, WithQueueSize(1), WithContext(ctx))
+	parentTaskStarted := make(chan struct{})
+	releaseParentTask := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseParentTask) }) }
+	defer func() {
+		release()
+		cancel()
+		parent.StopAndWait()
+	}()
+
+	if err := parent.Go(func() {
+		close(parentTaskStarted)
+		<-releaseParentTask
+	}); err != nil {
+		t.Fatalf("start parent task: %v", err)
+	}
+	<-parentTaskStarted
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+
+	subpool := parent.NewSubpool(1, WithQueueSize(3), WithNonBlocking(true))
+	var executedCount atomic.Int64
+	tasks := make([]Task, 3)
+	var accepted bool
+	tasks[0], accepted = subpool.TrySubmit(func() { executedCount.Add(1) })
+	if !accepted {
+		t.Fatal("TrySubmit rejected work despite available subpool capacity")
+	}
+	for i := 1; i < len(tasks); i++ {
+		tasks[i] = subpool.Submit(func() { executedCount.Add(1) })
+	}
+	cancel()
+
+	for _, task := range tasks {
+		select {
+		case <-task.Done():
+			if err := task.Wait(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("task error = %v, want context cancellation", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("pending subpool task was not canceled with its parent")
+		}
+	}
+	assert.Equal(t, int64(0), executedCount.Load())
+
+	release()
+	subpool.StopAndWait()
+	parent.StopAndWait()
+
+	assert.Equal(t, uint64(3), subpool.SubmittedTasks())
+	assert.Equal(t, uint64(0), subpool.CompletedTasks())
+	assert.Equal(t, uint64(0), subpool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), subpool.FailedTasks())
+	assert.Equal(t, uint64(3), subpool.CanceledTasks())
+	assert.Equal(t, uint64(0), subpool.DroppedTasks())
+	assert.Equal(t, uint64(0), subpool.WaitingTasks())
+	assert.Equal(t, int64(0), subpool.RunningWorkers())
+
+	assert.Equal(t, uint64(3), parent.SubmittedTasks())
+	assert.Equal(t, uint64(2), parent.CompletedTasks())
+	assert.Equal(t, uint64(2), parent.SuccessfulTasks())
+	assert.Equal(t, uint64(0), parent.FailedTasks())
+	assert.Equal(t, uint64(3), parent.CanceledTasks())
+	assert.Equal(t, uint64(1), parent.DroppedTasks())
+	assert.Equal(t, uint64(0), parent.WaitingTasks())
+	assert.Equal(t, int64(0), parent.RunningWorkers())
+}
+
+func TestSubpoolStopCancelsPendingParentSchedule(t *testing.T) {
+	parent := NewPool(1, WithQueueSize(1))
+	parentTaskStarted := make(chan struct{})
+	releaseParentTask := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseParentTask) }) }
+	defer func() {
+		release()
+		parent.StopAndWait()
+	}()
+
+	if err := parent.Go(func() {
+		close(parentTaskStarted)
+		<-releaseParentTask
+	}); err != nil {
+		t.Fatalf("start parent task: %v", err)
+	}
+	<-parentTaskStarted
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+
+	subpool := parent.NewSubpool(1, WithQueueSize(1), WithNonBlocking(true))
+	task, accepted := subpool.TrySubmit(func() {})
+	if !accepted {
+		t.Fatal("TrySubmit rejected work despite available subpool capacity")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		subpool.StopAndWait()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subpool stop waited forever for a full parent queue")
+	}
+	if err := task.Wait(); !errors.Is(err, ErrPoolStopped) {
+		t.Fatalf("task error = %v, want %v", err, ErrPoolStopped)
+	}
+}
+
+func TestParentStopAndWaitDrainsPendingSubpoolSchedule(t *testing.T) {
+	parent := NewPool(1, WithQueueSize(1))
+	parentTaskStarted := make(chan struct{})
+	releaseParentTask := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseParentTask) }) }
+	defer func() {
+		release()
+		parent.StopAndWait()
+	}()
+
+	if err := parent.Go(func() {
+		close(parentTaskStarted)
+		<-releaseParentTask
+	}); err != nil {
+		t.Fatalf("start parent task: %v", err)
+	}
+	<-parentTaskStarted
+	if err := parent.Go(func() {}); err != nil {
+		t.Fatalf("fill parent queue: %v", err)
+	}
+
+	subpool := parent.NewSubpool(1, WithQueueSize(3), WithNonBlocking(true))
+	var executedCount atomic.Int64
+	tasks := make([]Task, 3)
+	var accepted bool
+	tasks[0], accepted = subpool.TrySubmit(func() { executedCount.Add(1) })
+	if !accepted {
+		t.Fatal("TrySubmit rejected work despite available subpool capacity")
+	}
+	for i := 1; i < len(tasks); i++ {
+		tasks[i] = subpool.Submit(func() { executedCount.Add(1) })
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		parent.StopAndWait()
+		close(stopped)
+	}()
+	for _, task := range tasks {
+		select {
+		case <-task.Done():
+			if err := task.Wait(); !errors.Is(err, ErrPoolStopped) {
+				t.Fatalf("task error = %v, want %v", err, ErrPoolStopped)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("pending subpool future did not complete when parent stopped")
+		}
+	}
+	assert.Equal(t, int64(0), executedCount.Load())
+
+	release()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("parent StopAndWait did not finish after releasing its active task")
+	}
+	subpool.StopAndWait()
+
+	assert.Equal(t, uint64(3), subpool.SubmittedTasks())
+	assert.Equal(t, uint64(0), subpool.CompletedTasks())
+	assert.Equal(t, uint64(0), subpool.SuccessfulTasks())
+	assert.Equal(t, uint64(0), subpool.FailedTasks())
+	assert.Equal(t, uint64(3), subpool.CanceledTasks())
+	assert.Equal(t, uint64(0), subpool.DroppedTasks())
+	assert.Equal(t, uint64(0), subpool.WaitingTasks())
+	assert.Equal(t, int64(0), subpool.RunningWorkers())
+
+	assert.Equal(t, uint64(3), parent.SubmittedTasks())
+	assert.Equal(t, uint64(2), parent.CompletedTasks())
+	assert.Equal(t, uint64(2), parent.SuccessfulTasks())
+	assert.Equal(t, uint64(0), parent.FailedTasks())
+	assert.Equal(t, uint64(3), parent.CanceledTasks())
+	assert.Equal(t, uint64(1), parent.DroppedTasks())
+	assert.Equal(t, uint64(0), parent.WaitingTasks())
+	assert.Equal(t, int64(0), parent.RunningWorkers())
+}
