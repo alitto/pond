@@ -229,7 +229,7 @@ err := group.Wait()
 
 #### Cancelling tasks immediately
 
-When the first error occurs, tasks that are in the queue will be aborted but any running task will not be disrupted. The call to `group.Wait()` will not wait for these "in-flight" tasks to complete but they will continue running until completion nonetheless.
+When the first error occurs, tasks that are in the queue will be aborted but any running task will not be disrupted. The call to `group.Wait()` will wait for these "in-flight" tasks to complete before returning the first error.
 
 If you also need to stop these "in-flight" tasks when the first error occurs, you can reference the group's context (accessible via `group.Context()`) from any long-running operation carried out within these tasks. Here's an example:
 
