@@ -355,7 +355,7 @@ func (p *pool) wrapAndSubmit(task any, nonBlocking bool) (Task, bool) {
 	return future, true
 }
 
-func (p *pool) wrapTask(task any) (Task, *wrappedTask[struct{}, func(error)], func(error)) {
+func (p *pool) wrapTask(task any) (Task, func() error, func(error)) {
 	ctx := p.Context()
 	future, resolve := future.NewFuture(ctx)
 
@@ -536,6 +536,7 @@ func (p *pool) blockingSubmitSubpoolWorker(parentTask any) error {
 }
 
 func (p *pool) handleParentStopped(task any, err error) {
+	// Cancel the subpool context and drain accepted tasks; their futures resolve without running user code.
 	canceledErr := errors.Join(ErrContextCanceled, err)
 	p.cancel(err)
 	if task != nil {

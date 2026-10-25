@@ -44,13 +44,15 @@ func (t wrappedTask[R, C]) Run() error {
 	return err
 }
 
-func wrapTask[R any, C func(error) | func(R, error)](task any, callback C, ctx context.Context, panicRecovery bool) *wrappedTask[R, C] {
-	return &wrappedTask[R, C]{
+func wrapTask[R any, C func(error) | func(R, error)](task any, callback C, ctx context.Context, panicRecovery bool) func() error {
+	wrapped := &wrappedTask[R, C]{
 		task:          task,
 		callback:      callback,
 		ctx:           ctx,
 		panicRecovery: panicRecovery,
 	}
+
+	return wrapped.Run
 }
 
 func invokeTask[R any](task any, panicRecovery bool) (output R, err error) {
@@ -76,8 +78,6 @@ func invokeTask[R any](task any, panicRecovery bool) (output R, err error) {
 		output = t()
 	case func() (R, error):
 		output, err = t()
-	case interface{ Run() error }:
-		err = t.Run()
 	default:
 		panic(fmt.Sprintf("unsupported task type: %#v", task))
 	}
