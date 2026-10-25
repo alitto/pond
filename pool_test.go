@@ -820,6 +820,33 @@ func TestPoolSubmitWhileStoppingHasNoRace(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPoolStopRefusesNewTasksOnReturn(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		accepted func(pool Pool) bool
+	}{
+		{name: "Go", accepted: func(pool Pool) bool { return pool.Go(func() {}) == nil }},
+		{name: "Submit", accepted: func(pool Pool) bool { return pool.Submit(func() {}).Wait() == nil }},
+		{name: "TrySubmit", accepted: func(pool Pool) bool { _, ok := pool.TrySubmit(func() {}); return ok }},
+		{name: "Stopped", accepted: func(pool Pool) bool { return !pool.Stopped() }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// Repeated because a pool that finishes stopping in the background
+			// before the first call would pass a single attempt.
+			for i := 0; i < 100; i++ {
+				pool := NewPool(2)
+
+				// Do not wait for the returned future, the pool must already refuse new tasks.
+				pool.Stop()
+
+				assert.Equal(t, false, test.accepted(pool))
+
+				pool.StopAndWait()
+			}
+		})
+	}
+}
+
 func TestPoolTrySubmit(t *testing.T) {
 	pool := NewPool(1, WithQueueSize(1))
 
