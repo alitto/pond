@@ -536,12 +536,12 @@ func (p *pool) updateMetrics(err error) {
 }
 
 func (p *pool) Stop() Task {
-	return Submit(func() {
-		// Stop accepting new tasks while holding the lock to avoid race conditions.
-		p.mutex.Lock()
-		p.closed.Store(true)
-		p.mutex.Unlock()
+	// Stop accepting new tasks while holding the lock to avoid race conditions.
+	p.mutex.Lock()
+	p.closed.Store(true)
+	p.mutex.Unlock()
 
+	return Submit(func() {
 		// Wait for all workers to finish executing all tasks (including the ones in the queue)
 		p.workerWaitGroup.Wait()
 
