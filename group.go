@@ -116,8 +116,13 @@ func (g *abstractTaskGroup[T, E, O]) submit(task any) {
 	err := g.pool.submit(func() error {
 		defer g.taskWaitGroup.Done()
 
-		// Check if the context has been cancelled to prevent running tasks that are not needed
-		if err := g.future.Context().Err(); err != nil {
+		// Check both contexts before running a queued task. The group may have
+		// a context that is independent of the pool context.
+		err := g.future.Context().Err()
+		if err == nil {
+			err = g.pool.Context().Err()
+		}
+		if err != nil {
 			// Wrap the error with the context canceled error to reflect that the task was canceled.
 			err = errors.Join(ErrContextCanceled, err)
 

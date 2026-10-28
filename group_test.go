@@ -510,3 +510,94 @@ func TestTaskGroupContext(t *testing.T) {
 	assert.Equal(t, uint64(2), pool.FailedTasks())
 	assert.Equal(t, uint64(1), pool.CanceledTasks())
 }
+
+func TestTaskGroupWithIndependentContextHonorsPoolCancellation(t *testing.T) {
+	t.Parallel()
+
+	for _, cancelPool := range []bool{false, true} {
+		cancelPool := cancelPool
+		name := "active pool"
+		if cancelPool {
+			name = "canceled pool"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			pool := NewPool(1, WithContext(ctx))
+			defer pool.StopAndWait()
+
+			started := make(chan struct{})
+			release := make(chan struct{})
+			pool.Submit(func() {
+				close(started)
+				<-release
+			})
+			<-started
+
+			group := pool.NewGroupContext(context.Background())
+			var ran atomic.Bool
+			group.Submit(func() { ran.Store(true) })
+			if cancelPool {
+				cancel()
+			}
+			close(release)
+			err := group.Wait()
+			pool.StopAndWait()
+
+			if cancelPool {
+				assert.True(t, errors.Is(err, ErrContextCanceled))
+				assert.True(t, errors.Is(err, context.Canceled))
+			} else {
+				assert.Equal(t, nil, err)
+			}
+			assert.Equal(t, !cancelPool, ran.Load())
+			assert.Equal(t, uint64(0), pool.FailedTasks())
+			if cancelPool {
+				assert.Equal(t, uint64(1), pool.CanceledTasks())
+			} else {
+				assert.Equal(t, uint64(0), pool.CanceledTasks())
+			}
+		})
+	}
+}
+
+func TestResultTaskGroupWithIndependentContextHonorsPoolCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool := NewResultPool[int](1, WithContext(ctx))
+	defer pool.StopAndWait()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	pool.Submit(func() int {
+		close(started)
+		<-release
+		return 1
+	})
+	<-started
+
+	group := pool.NewGroupContext(context.Background())
+	var ran atomic.Bool
+	group.Submit(func() int {
+		ran.Store(true)
+		return 42
+	})
+	cancel()
+	close(release)
+	results, err := group.Wait()
+	pool.StopAndWait()
+
+	assert.True(t, errors.Is(err, ErrContextCanceled))
+	assert.True(t, errors.Is(err, context.Canceled))
+	assert.Equal(t, false, ran.Load())
+	assert.Equal(t, 1, len(results))
+	if len(results) == 1 {
+		assert.Equal(t, 0, results[0])
+	}
+	assert.Equal(t, uint64(1), pool.CanceledTasks())
+	assert.Equal(t, uint64(0), pool.FailedTasks())
+}
